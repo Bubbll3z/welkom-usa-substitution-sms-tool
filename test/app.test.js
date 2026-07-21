@@ -58,6 +58,52 @@ test("API rejects wrong staff password", async () => {
   assert.equal(response.statusCode, 401);
 });
 
+test("API searches products with staff password", async () => {
+  process.env.SHOPIFY_SHOP_DOMAIN = "welkom-usa.myshopify.com";
+  process.env.SHOPIFY_ADMIN_ACCESS_TOKEN = "shpat_test";
+  process.env.SHOPIFY_API_VERSION = "2026-07";
+
+  const originalFetch = global.fetch;
+  global.fetch = async (url, options) => {
+    assert.match(url, /welkom-usa\.myshopify\.com/);
+    assert.equal(options.headers["X-Shopify-Access-Token"], "shpat_test");
+    return {
+      ok: true,
+      json: async () => ({
+        data: {
+          products: {
+            nodes: [
+              {
+                id: "product-1",
+                title: "Cadbury Flake Chocolate Bar 32g",
+                status: "ACTIVE",
+                featuredImage: { url: "https://example.com/flake.jpg" },
+                variants: {
+                  nodes: [{ id: "variant-1", title: "Default Title", price: { amount: "0.99" } }]
+                }
+              }
+            ]
+          }
+        }
+      })
+    };
+  };
+
+  try {
+    const response = await handler(event("/api/product-search", { password: "test123", query: "FLAKE32" }));
+    const body = JSON.parse(response.body);
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.success, true);
+    assert.equal(body.products[0].title, "Cadbury Flake Chocolate Bar 32g");
+    assert.doesNotMatch(response.body, /shpat_test/);
+  } finally {
+    global.fetch = originalFetch;
+    delete process.env.SHOPIFY_SHOP_DOMAIN;
+    delete process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
+    delete process.env.SHOPIFY_API_VERSION;
+  }
+});
+
 test("normalizes order numbers", () => {
   assert.equal(normalizeOrderQuery("#1023"), "1023");
   assert.equal(normalizeOrderQuery("1023"), "1023");

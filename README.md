@@ -7,9 +7,19 @@ Staff can:
 1. Search a Shopify order number.
 2. View customer details and order items.
 3. Select the unavailable item.
-4. Select a possible substitution product.
+4. Select a suggested substitution product or search Shopify by title, SKU, or barcode.
 5. Review or edit the substitution SMS.
 6. Send the SMS through Twilio.
+
+## Design Overview
+
+The app uses a Welkom USA internal dashboard layout:
+
+- Fixed desktop sidebar with Search Order, Dashboard, Sent Messages, Templates, Settings, Backup, and Logout.
+- White header with the Substitution SMS title, Sent Messages shortcut, and Welkom USA user area.
+- Two-column desktop workflow: order/customer details on the left and the editable SMS message on the right.
+- Responsive tablet/mobile layout with a drawer sidebar and stacked cards.
+- Live character count, estimated SMS segments, message preview, token insertion, copy action, send confirmation, duplicate-send warning, and local message history.
 
 ## Message Template
 
@@ -24,6 +34,8 @@ npm install
 copy .env.example .env
 npm run dev
 ```
+
+The local dev server serves the static frontend and Netlify-style API routes.
 
 For safe testing, keep:
 
@@ -47,6 +59,8 @@ Build command: npm run build
 Publish directory: public
 Functions directory: netlify/functions
 ```
+
+The existing `netlify.toml` contains the same settings and redirects `/api/*` requests to the Netlify Function.
 
 ## Required Netlify Environment Variables
 
@@ -87,6 +101,8 @@ read_customers
 
 Shopify may require protected customer data configuration before customer phone numbers are returned.
 
+Product substitution search uses the Admin API server-side only. Staff can search by product title, SKU, or barcode from the dashboard; no Shopify token is exposed to the browser.
+
 Steps:
 
 1. Shopify Admin -> Settings.
@@ -126,6 +142,8 @@ SMS_DRY_RUN=false
 ```
 
 Send one real test SMS.
+
+For Twilio toll-free numbers, make sure the number is verified/approved before real sending. Keep the first real test to your own or company-approved phone number.
 
 ## Tests
 
