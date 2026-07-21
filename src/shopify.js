@@ -2,23 +2,65 @@ const { redactPhone } = require("./sms");
 
 const SHOP_DOMAIN = "welkom-usa.myshopify.com";
 const DEFAULT_API_VERSION = "2025-10";
+const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
+
+let cachedToken = null;
 
 function getConfig(env = process.env) {
   return {
     shopDomain: env.SHOPIFY_SHOP_DOMAIN || SHOP_DOMAIN,
     accessToken: env.SHOPIFY_ADMIN_ACCESS_TOKEN || "",
+    clientId: env.SHOPIFY_CLIENT_ID || "",
+    clientSecret: env.SHOPIFY_CLIENT_SECRET || "",
     apiVersion: env.SHOPIFY_API_VERSION || DEFAULT_API_VERSION
   };
 }
 
 function hasConfig(env = process.env) {
   const config = getConfig(env);
-  return Boolean(
-    config.shopDomain === SHOP_DOMAIN &&
-      config.accessToken &&
-      !config.accessToken.startsWith("paste_") &&
-      !config.accessToken.startsWith("your_")
-  );
+  const hasStaticToken = config.accessToken &&
+    !config.accessToken.startsWith("paste_") &&
+    !config.accessToken.startsWith("your_");
+  const hasClientCredentials = config.clientId &&
+    config.clientSecret &&
+    !config.clientId.startsWith("your_") &&
+    !config.clientSecret.startsWith("your_");
+  return Boolean(config.shopDomain === SHOP_DOMAIN && (hasStaticToken || hasClientCredentials));
+}
+
+async function getAccessToken({ env = process.env, fetchImpl = fetch } = {}) {
+  const config = getConfig(env);
+  if (config.accessToken && !config.accessToken.startsWith("paste_") && !config.accessToken.startsWith("your_")) {
+    return config.accessToken;
+  }
+  if (!config.clientId || !config.clientSecret) {
+    throw new Error("Shopify Admin API is not configured.");
+  }
+  const cacheKey = `${config.shopDomain}:${config.clientId}`;
+  if (cachedToken && cachedToken.cacheKey === cacheKey && cachedToken.expiresAt > Date.now() + TOKEN_REFRESH_BUFFER_MS) {
+    return cachedToken.accessToken;
+  }
+  const response = await fetchImpl(`https://${config.shopDomain}/admin/oauth/access_token`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: config.clientId,
+      client_secret: config.clientSecret
+    }).toString()
+  });
+  const json = await response.json().catch(() => ({}));
+  if (!response.ok || !json.access_token) {
+    throw new Error("Shopify access token request failed.");
+  }
+  cachedToken = {
+    cacheKey,
+    accessToken: json.access_token,
+    expiresAt: Date.now() + Math.max(Number(json.expires_in || 0) * 1000, 0)
+  };
+  return cachedToken.accessToken;
 }
 
 function normalizeOrderQuery(query) {
@@ -145,11 +187,12 @@ function simplifyOrder(order, substitutionProducts = []) {
 
 async function shopifyGraphql(query, variables, { env = process.env, fetchImpl = fetch } = {}) {
   const config = getConfig(env);
+  const accessToken = await getAccessToken({ env, fetchImpl });
   const response = await fetchImpl(`https://${config.shopDomain}/admin/api/${config.apiVersion}/graphql.json`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Shopify-Access-Token": config.accessToken
+      "X-Shopify-Access-Token": accessToken
     },
     body: JSON.stringify({ query, variables })
   });
@@ -373,6 +416,7 @@ module.exports = {
   expectedOrderName,
   findOrder,
   getConfig,
+  getAccessToken,
   getOrderById,
   getVariantById,
   hasConfig,

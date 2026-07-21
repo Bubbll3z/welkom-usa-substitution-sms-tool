@@ -72,6 +72,8 @@ SMS_DRY_RUN=true
 MAX_SMS_LENGTH=320
 
 SHOPIFY_SHOP_DOMAIN=welkom-usa.myshopify.com
+SHOPIFY_CLIENT_ID=
+SHOPIFY_CLIENT_SECRET=
 SHOPIFY_ADMIN_ACCESS_TOKEN=
 SHOPIFY_API_VERSION=2025-10
 
@@ -89,11 +91,11 @@ NETLIFY_BLOBS_SITE_ID=
 NETLIFY_BLOBS_TOKEN=
 ```
 
-`SESSION_SECRET` must be at least 32 random characters. Use either Twilio Auth Token auth or API Key auth. Use either a Twilio sender phone number/from number or a Messaging Service SID.
+`SESSION_SECRET` must be at least 32 random characters. For new Shopify Dev Dashboard apps, set `SHOPIFY_CLIENT_ID` and `SHOPIFY_CLIENT_SECRET`; the app automatically requests and refreshes the 24-hour Admin API token server-side. `SHOPIFY_ADMIN_ACCESS_TOKEN` is only a fallback for older apps where Shopify directly provided a token. Use either Twilio Auth Token auth or API Key auth. Use either a Twilio sender phone number/from number or a Messaging Service SID.
 
 ## Shopify Setup
 
-Create a Shopify custom app for Welkom USA with Admin API access.
+Create a Shopify custom app for Welkom USA with Admin API access in the Shopify Dev Dashboard.
 
 Required scopes:
 
@@ -116,6 +118,15 @@ SMS consent = Yes
 ```
 
 The app only treats consent as granted when the key matches `SMS consent` case-insensitively and the value equals `Yes` case-insensitively. Accelerated checkout orders may not include this attribute; those are treated as no consent and sending is blocked.
+
+After installing the app, copy the Client ID and Client secret from the Dev Dashboard app settings into Netlify:
+
+```env
+SHOPIFY_CLIENT_ID=
+SHOPIFY_CLIENT_SECRET=
+```
+
+Do not paste these values into chat or commit them to GitHub. The app exchanges them at `https://welkom-usa.myshopify.com/admin/oauth/access_token` using Shopify's client credentials grant and caches the returned access token until it is close to expiry.
 
 ## Twilio Setup
 

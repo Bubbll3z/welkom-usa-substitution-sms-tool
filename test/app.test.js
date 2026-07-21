@@ -14,7 +14,7 @@ const { handler } = require("../netlify/functions/api");
 const { verifySession } = require("../src/auth");
 const { clearMemoryHistory } = require("../src/history");
 const { buildSubstitutionMessage, sendSms, smsLength, validateMessage } = require("../src/sms");
-const { consentFromAttributes, findOrder, normalizeOrderQuery, searchProductsForSubstitutions } = require("../src/shopify");
+const { consentFromAttributes, findOrder, getAccessToken, normalizeOrderQuery, searchProductsForSubstitutions } = require("../src/shopify");
 
 function event(path, body, headers = {}, method = "POST") {
   const [pathOnly, rawQuery = ""] = path.split("?");
@@ -261,6 +261,32 @@ test("Shopify consent mapping and exact order search", async () => {
 
   const partial = await findOrder("#1023", { env: shopifyEnv(), fetchImpl: mockFetch({ order: orderNode({ name: "#10230" }) }) });
   assert.equal(partial.status, 404);
+});
+
+test("Shopify client credentials grant retrieves an expiring Admin API token", async () => {
+  const calls = [];
+  const token = await getAccessToken({
+    env: {
+      SHOPIFY_SHOP_DOMAIN: "welkom-usa.myshopify.com",
+      SHOPIFY_CLIENT_ID: "client-id",
+      SHOPIFY_CLIENT_SECRET: "client-secret",
+      SHOPIFY_API_VERSION: "2025-10"
+    },
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      assert.equal(url, "https://welkom-usa.myshopify.com/admin/oauth/access_token");
+      assert.equal(options.method, "POST");
+      assert.match(options.body, /grant_type=client_credentials/);
+      assert.match(options.body, /client_id=client-id/);
+      assert.match(options.body, /client_secret=client-secret/);
+      return {
+        ok: true,
+        json: async () => ({ access_token: "shpat_generated", expires_in: 86399, scope: "read_orders,read_products" })
+      };
+    }
+  });
+  assert.equal(token, "shpat_generated");
+  assert.equal(calls.length, 1);
 });
 
 test("product search filters inactive and unavailable variants", async () => {
