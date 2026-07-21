@@ -19,15 +19,25 @@ const {
 } = require("../../src/shopify");
 const { buildSubstitutionMessage, redactPhone, sendSms, smsLength, validateMessage, validateTwilioSignature } = require("../../src/sms");
 const {
+  archiveTemplate,
+  backupPayload,
   createMessageRecord,
   findByIdempotency,
   findDuplicate,
   getMessageRecord,
+  listTemplates,
   listMessageRecords,
+  messageStats,
   publicRecord,
+  queryMessageRecords,
+  recordsToCsv,
   saveRecord,
+  saveTemplate,
   updateMessageStatus
 } = require("../../src/history");
+
+const apiBuckets = new Map();
+const MAX_BODY_BYTES = 16 * 1024;
 
 function json(statusCode, body, headers = {}) {
   return {
@@ -51,6 +61,28 @@ function parseBody(event) {
   } catch (parseError) {
     return null;
   }
+}
+
+function bodyTooLarge(event) {
+  return Buffer.byteLength(event.body || "", "utf8") > MAX_BODY_BYTES;
+}
+
+function clientKey(event, route) {
+  return `${route}:${event.headers?.["x-forwarded-for"] || event.headers?.["client-ip"] || "local"}`;
+}
+
+function rateLimit(event, route, max = 60, windowMs = 60 * 1000) {
+  const key = clientKey(event, route);
+  const now = Date.now();
+  const entry = apiBuckets.get(key) || { count: 0, resetAt: now + windowMs };
+  if (entry.resetAt < now) {
+    entry.count = 0;
+    entry.resetAt = now + windowMs;
+  }
+  entry.count += 1;
+  apiBuckets.set(key, entry);
+  if (entry.count > max) return error(429, "RATE_LIMITED", "Too many requests. Please wait and try again.");
+  return null;
 }
 
 function parseForm(event) {
@@ -108,6 +140,8 @@ async function handleSession(event) {
 }
 
 async function handleOrderSearch(event) {
+  const limited = rateLimit(event, "order-search", 30);
+  if (limited) return limited;
   if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
   const auth = requireSession(event);
   if (auth.error) return auth.error;
@@ -120,6 +154,8 @@ async function handleOrderSearch(event) {
 }
 
 async function handleProductSearch(event) {
+  const limited = rateLimit(event, "product-search", 40);
+  if (limited) return limited;
   if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
   const auth = requireSession(event);
   if (auth.error) return auth.error;
@@ -137,6 +173,8 @@ async function handleProductSearch(event) {
 }
 
 async function handleLineItemSubstitutions(event) {
+  const limited = rateLimit(event, "line-item-substitutions", 40);
+  if (limited) return limited;
   if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
   const auth = requireSession(event);
   if (auth.error) return auth.error;
@@ -187,6 +225,8 @@ function validateOrderForSending(order, body) {
 }
 
 async function handleSendSubstitutionSms(event) {
+  const limited = rateLimit(event, "send-substitution-sms", 10);
+  if (limited) return limited;
   if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
   const auth = requireSession(event);
   if (auth.error) return auth.error;
@@ -295,8 +335,88 @@ async function handleSendSubstitutionSms(event) {
 async function handleHistory(event) {
   const auth = requireSession(event);
   if (auth.error) return auth.error;
-  const records = await listMessageRecords();
-  return json(200, { success: true, records });
+  const params = new URLSearchParams(event.rawQuery || "");
+  const result = await queryMessageRecords(process.env, {
+    page: params.get("page"),
+    limit: params.get("limit"),
+    query: params.get("query"),
+    status: params.get("status"),
+    dryRun: params.get("dryRun")
+  });
+  return json(200, { success: true, ...result });
+}
+
+async function handleDashboard(event) {
+  const auth = requireSession(event);
+  if (auth.error) return auth.error;
+  return json(200, {
+    success: true,
+    status: safeConfigStatus(),
+    stats: await messageStats()
+  });
+}
+
+function safeConfigStatus() {
+  const sender = process.env.TWILIO_MESSAGING_SERVICE_SID
+    ? `Messaging Service ${String(process.env.TWILIO_MESSAGING_SERVICE_SID).slice(0, 4)}...`
+    : process.env.TWILIO_FROM_NUMBER || process.env.TWILIO_PHONE_NUMBER
+      ? `Number ${redactPhone(process.env.TWILIO_FROM_NUMBER || process.env.TWILIO_PHONE_NUMBER)}`
+      : "";
+  return {
+    shopifyDomain: process.env.SHOPIFY_SHOP_DOMAIN || "welkom-usa.myshopify.com",
+    shopifyApiVersion: process.env.SHOPIFY_API_VERSION || "2025-10",
+    shopifyConfigured: hasConfig(),
+    twilioConfigured: Boolean(process.env.TWILIO_ACCOUNT_SID && (process.env.TWILIO_AUTH_TOKEN || (process.env.TWILIO_API_KEY_SID && process.env.TWILIO_API_KEY_SECRET)) && (process.env.TWILIO_MESSAGING_SERVICE_SID || process.env.TWILIO_FROM_NUMBER || process.env.TWILIO_PHONE_NUMBER)),
+    twilioSender: sender,
+    storageProvider: process.env.MESSAGE_STORAGE_PROVIDER || (process.env.NETLIFY === "true" ? "netlify-blobs" : "memory"),
+    storagePersistent: (process.env.MESSAGE_STORAGE_PROVIDER || "").toLowerCase() === "netlify-blobs",
+    dryRun: String(process.env.SMS_DRY_RUN ?? process.env.DRY_RUN ?? "true").toLowerCase() !== "false",
+    productionSendingEnabled: String(process.env.SMS_DRY_RUN ?? process.env.DRY_RUN ?? "true").toLowerCase() === "false",
+    sessionDurationMinutes: Number(process.env.SESSION_DURATION_MINUTES || 480),
+    consentEnforced: true,
+    cloudflareRequired: false
+  };
+}
+
+async function handleTemplates(event) {
+  const auth = requireSession(event);
+  if (auth.error) return auth.error;
+  if (event.httpMethod === "GET") return json(200, { success: true, templates: await listTemplates() });
+  if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
+  const body = parseBody(event);
+  if (!body) return error(400, "INVALID_REQUEST", "Request body must be valid JSON.");
+  const result = await saveTemplate(body);
+  if (!result.ok) return error(400, result.code, result.error);
+  return json(200, { success: true, template: result.template });
+}
+
+async function handleTemplateArchive(event, route) {
+  const auth = requireSession(event);
+  if (auth.error) return auth.error;
+  const id = decodeURIComponent(route.replace(/^templates\//, "").replace(/\/archive$/, ""));
+  const result = await archiveTemplate(id);
+  if (!result.ok) return error(400, result.code, result.error);
+  return json(200, { success: true, template: result.template });
+}
+
+async function handleBackup(event, route) {
+  const auth = requireSession(event);
+  if (auth.error) return auth.error;
+  const payload = await backupPayload();
+  if (route === "backup/messages.csv") {
+    return {
+      statusCode: 200,
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Cache-Control": "no-store",
+        "Content-Disposition": `attachment; filename="welkom-sms-messages-${new Date().toISOString().slice(0, 10)}.csv"`
+      },
+      body: recordsToCsv(payload.messageHistory)
+    };
+  }
+  return json(200, payload, {
+    "Content-Disposition": `attachment; filename="welkom-sms-backup-${new Date().toISOString().slice(0, 10)}.json"`
+  });
 }
 
 async function handleHistoryRecord(event, route) {
@@ -327,11 +447,16 @@ async function handleTwilioStatus(event) {
 
 exports.handler = async (event) => {
   const route = routeName(event);
+  if (bodyTooLarge(event)) return error(413, "INVALID_REQUEST", "Request body is too large.");
 
   if (route === "twilio-status" && event.httpMethod === "POST") return handleTwilioStatus(event);
   if (route === "session" && event.httpMethod === "GET") return handleSession(event);
+  if (route === "dashboard" && event.httpMethod === "GET") return handleDashboard(event);
   if (route === "message-history" && event.httpMethod === "GET") return handleHistory(event);
   if (route.startsWith("message-history/") && event.httpMethod === "GET") return handleHistoryRecord(event, route);
+  if (route === "templates" && event.httpMethod === "GET") return handleTemplates(event);
+  if (route === "backup.json" && event.httpMethod === "GET") return handleBackup(event, route);
+  if (route === "backup/messages.csv" && event.httpMethod === "GET") return handleBackup(event, route);
 
   if (event.httpMethod !== "POST") {
     return error(405, "INVALID_REQUEST", "Method not allowed.");
@@ -339,6 +464,8 @@ exports.handler = async (event) => {
 
   if (route === "login") return handleLogin(event);
   if (route === "logout") return handleLogout(event);
+  if (route === "templates") return handleTemplates(event);
+  if (/^templates\/.+\/archive$/.test(route)) return handleTemplateArchive(event, route);
   if (route === "order-search") return handleOrderSearch(event);
   if (route === "product-search") return handleProductSearch(event);
   if (route === "line-item-substitutions") return handleLineItemSubstitutions(event);

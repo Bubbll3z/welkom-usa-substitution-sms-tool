@@ -182,6 +182,8 @@ test.beforeEach(() => {
   process.env.SHOPIFY_SHOP_DOMAIN = "welkom-usa.myshopify.com";
   process.env.SHOPIFY_ADMIN_ACCESS_TOKEN = "shpat_test";
   process.env.SHOPIFY_API_VERSION = "2025-10";
+  delete process.env.SHOPIFY_CLIENT_ID;
+  delete process.env.SHOPIFY_CLIENT_SECRET;
 });
 
 test("authentication supports login, session, logout, wrong password, and expired session", async () => {
@@ -398,6 +400,79 @@ test("history endpoint lists stored message records without secrets", async () =
   } finally {
     global.fetch = originalFetch;
   }
+});
+
+test("dashboard, backup and filtered history endpoints are protected and do not expose secrets", async () => {
+  const blocked = await handler(event("/api/dashboard", undefined, {}, "GET"));
+  assert.equal(blocked.statusCode, 401);
+
+  const cookie = await loginCookie();
+  const originalFetch = global.fetch;
+  global.fetch = mockFetch();
+  try {
+    await handler(event("/api/send-substitution-sms", {
+      orderId: "gid://shopify/Order/1",
+      lineItemId: "gid://shopify/LineItem/1",
+      substituteVariantId: "gid://shopify/ProductVariant/new",
+      message: "Welkom USA: Hi Sarah, Cadbury Crunchie Chocolate Bar 44g in order #1023 is unavailable. We can substitute it with Cadbury Flake Chocolate Bar 32g. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.",
+      idempotencyKey: "dashboard-history"
+    }, { cookie }));
+
+    const dashboard = await handler(event("/api/dashboard", undefined, { cookie }, "GET"));
+    assert.equal(dashboard.statusCode, 200);
+    assert.doesNotMatch(dashboard.body, /shpat_test|test123|12345678901234567890123456789012|15551234567/);
+    const dashboardBody = JSON.parse(dashboard.body);
+    assert.equal(dashboardBody.success, true);
+    assert.equal(dashboardBody.status.shopifyConfigured, true);
+    assert.equal(dashboardBody.status.cloudflareRequired, false);
+    assert.equal(dashboardBody.stats.total, 1);
+
+    const filtered = await handler(event("/api/message-history?search=1023&dryRun=true&limit=10", undefined, { cookie }, "GET"));
+    assert.equal(filtered.statusCode, 200);
+    assert.equal(JSON.parse(filtered.body).records.length, 1);
+
+    const jsonBackup = await handler(event("/api/backup.json", undefined, { cookie }, "GET"));
+    assert.equal(jsonBackup.statusCode, 200);
+    assert.doesNotMatch(jsonBackup.body, /shpat_test|test123|12345678901234567890123456789012|15551234567/);
+    assert.equal(JSON.parse(jsonBackup.body).messageHistory.length, 1);
+
+    const csvBackup = await handler(event("/api/backup/messages.csv", undefined, { cookie }, "GET"));
+    assert.equal(csvBackup.statusCode, 200);
+    assert.match(csvBackup.body, /orderName/);
+    assert.doesNotMatch(csvBackup.body, /15551234567/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("template endpoint validates approved wording and supports archive", async () => {
+  const cookie = await loginCookie();
+
+  const initial = await handler(event("/api/templates", undefined, { cookie }, "GET"));
+  assert.equal(initial.statusCode, 200);
+  assert.equal(JSON.parse(initial.body).templates.length, 1);
+
+  const invalid = await handler(event("/api/templates", {
+    name: "Bad",
+    body: "Hi [FIRST NAME], your item is unavailable."
+  }, { cookie }));
+  assert.equal(invalid.statusCode, 400);
+  assert.equal(JSON.parse(invalid.body).code, "TEMPLATE_INVALID");
+
+  const validBody = "Welkom USA: Hi [FIRST NAME], [UNAVAILABLE ITEM] in order #[ORDER NUMBER] is unavailable. We can substitute it with [SUBSTITUTE ITEM]. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.";
+  const saved = await handler(event("/api/templates", {
+    name: "Substitution approval",
+    body: validBody
+  }, { cookie }));
+  assert.equal(saved.statusCode, 200);
+  const template = JSON.parse(saved.body).template;
+  assert.equal(template.name, "Substitution approval");
+
+  const archived = await handler(event(`/api/templates/${encodeURIComponent(template.id)}/archive`, {}, { cookie }));
+  assert.equal(archived.statusCode, 200);
+
+  const remaining = await handler(event("/api/templates", undefined, { cookie }, "GET"));
+  assert.equal(JSON.parse(remaining.body).templates.some((item) => item.id === template.id), false);
 });
 
 test("Twilio status callback validates signatures", async () => {

@@ -93,6 +93,30 @@ NETLIFY_BLOBS_TOKEN=
 
 `SESSION_SECRET` must be at least 32 random characters. For new Shopify Dev Dashboard apps, set `SHOPIFY_CLIENT_ID` and `SHOPIFY_CLIENT_SECRET`; the app automatically requests and refreshes the 24-hour Admin API token server-side. `SHOPIFY_ADMIN_ACCESS_TOKEN` is only a fallback for older apps where Shopify directly provided a token. Use either Twilio Auth Token auth or API Key auth. Use either a Twilio sender phone number/from number or a Messaging Service SID.
 
+## Production Secret Checklist
+
+1. In Netlify, open the Welkom USA SMS site, then go to **Site configuration > Environment variables**.
+2. Add `STAFF_PASSWORD` with the password staff will use to log in. Do not use the example value.
+3. Add `SESSION_SECRET` with a random value of at least 32 characters.
+4. Add Shopify values from the Shopify Dev Dashboard app:
+   - `SHOPIFY_SHOP_DOMAIN=welkom-usa.myshopify.com`
+   - `SHOPIFY_CLIENT_ID`
+   - `SHOPIFY_CLIENT_SECRET`
+   - `SHOPIFY_API_VERSION=2025-10`
+5. Add Twilio values from the Twilio Console:
+   - `TWILIO_ACCOUNT_SID`
+   - `TWILIO_AUTH_TOKEN`
+   - `TWILIO_PHONE_NUMBER` or `TWILIO_FROM_NUMBER`
+   - optional `TWILIO_MESSAGING_SERVICE_SID` if sending through a messaging service
+6. Set storage for production:
+   - `MESSAGE_STORAGE_PROVIDER=netlify-blobs`
+   - `NETLIFY_BLOBS_SITE_ID`
+   - `NETLIFY_BLOBS_TOKEN`
+7. Keep both `DRY_RUN=true` and `SMS_DRY_RUN=true` for the first deployed test.
+8. After the dry-run test passes, change both dry-run variables to `false` only when a manager approves one live test to a company-controlled phone.
+
+No Cloudflare secret is required for this app unless you later choose to move hosting away from Netlify.
+
 ## Shopify Setup
 
 Create a Shopify custom app for Welkom USA with Admin API access in the Shopify Dev Dashboard.
