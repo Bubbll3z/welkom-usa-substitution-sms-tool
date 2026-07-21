@@ -288,6 +288,15 @@ test("API order search and selected-line-item substitutions require session", as
   }
 });
 
+test("manual product search reports missing Shopify configuration", async () => {
+  const cookie = await loginCookie();
+  delete process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
+  const response = await handler(event("/api/product-search", { query: "flake" }, { cookie }));
+  const body = JSON.parse(response.body);
+  assert.equal(response.statusCode, 500);
+  assert.equal(body.code, "SHOPIFY_ERROR");
+});
+
 test("send revalidates order consent, line item, substitute inventory, duplicate and idempotency", async () => {
   const cookie = await loginCookie();
   const originalFetch = global.fetch;

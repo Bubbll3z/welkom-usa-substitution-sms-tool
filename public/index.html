@@ -914,15 +914,15 @@
       </div>
 
       <nav class="nav">
-        <button class="nav-item active" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg>Search Order</button>
-        <button class="nav-item" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 13h6v7H4zM14 4h6v16h-6zM4 4h6v5H4z"/></svg>Dashboard</button>
+        <button class="nav-item active" type="button" id="searchNav"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg>Search Order</button>
+        <button class="nav-item" type="button" id="dashboardNav"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 13h6v7H4zM14 4h6v16h-6zM4 4h6v5H4z"/></svg>Dashboard</button>
         <button class="nav-item" type="button" id="historyNav"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>Sent Messages</button>
-        <button class="nav-item" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h10a2 2 0 0 1 2 2v16l-7-4-7 4V5a2 2 0 0 1 2-2z"/></svg>Templates</button>
-        <button class="nav-item" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21h-4v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1-2.8-2.8.1-.1A1.7 1.7 0 0 0 4.6 15 1.7 1.7 0 0 0 3.1 14H3v-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 2.8-2.8.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.5V3h4v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1 2.8 2.8-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1h.1v4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
-        <button class="nav-item" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>Backup</button>
+        <button class="nav-item" type="button" id="templatesNav"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h10a2 2 0 0 1 2 2v16l-7-4-7 4V5a2 2 0 0 1 2-2z"/></svg>Templates</button>
+        <button class="nav-item" type="button" id="settingsNav"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21h-4v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1-2.8-2.8.1-.1A1.7 1.7 0 0 0 4.6 15 1.7 1.7 0 0 0 3.1 14H3v-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 2.8-2.8.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.5V3h4v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1 2.8 2.8-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1h.1v4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
+        <button class="nav-item" type="button" id="backupNav"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>Backup</button>
       </nav>
 
-      <button class="nav-item" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M21 3v18"/></svg>Logout</button>
+      <button class="nav-item" type="button" id="sidebarLogoutButton"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M21 3v18"/></svg>Logout</button>
       <div class="sidebar-foot">© 2026 Welkom USA<br>SMS App</div>
     </aside>
 
@@ -1133,7 +1133,13 @@
       historyList: document.getElementById("historyList"),
       clearHistoryButton: document.getElementById("clearHistoryButton"),
       historyShortcut: document.getElementById("historyShortcut"),
-      historyNav: document.getElementById("historyNav")
+      historyNav: document.getElementById("historyNav"),
+      searchNav: document.getElementById("searchNav"),
+      dashboardNav: document.getElementById("dashboardNav"),
+      templatesNav: document.getElementById("templatesNav"),
+      settingsNav: document.getElementById("settingsNav"),
+      backupNav: document.getElementById("backupNav"),
+      sidebarLogoutButton: document.getElementById("sidebarLogoutButton")
     };
 
     const TEMPLATE = "Welkom USA: Hi [FIRST NAME], [UNAVAILABLE ITEM] in order #[ORDER NUMBER] is unavailable. We can substitute it with [SUBSTITUTE ITEM]. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.";
@@ -1698,11 +1704,48 @@
         }
       }
     });
-    els.templateButton.addEventListener("click", fillTemplate);
+    els.templateButton.addEventListener("click", () => {
+      const missing = [];
+      if (!state.order) missing.push("load an order");
+      if (!state.unavailableItem) missing.push("select the unavailable item");
+      if (!state.substituteItem) missing.push("select a substitute item");
+      if (missing.length) {
+        toast("error", `To use the template, first ${missing.join(", ")}.`);
+        return;
+      }
+      fillTemplate();
+      toast("success", "Template applied.");
+    });
     els.clearHistoryButton.addEventListener("click", () => toast("success", "History is persistent. Use storage admin tools to remove records."));
+    els.searchNav.addEventListener("click", () => {
+      document.querySelector(".content").scrollIntoView({ behavior: "smooth", block: "start" });
+      toggleDrawer(false);
+    });
+    els.dashboardNav.addEventListener("click", () => {
+      document.querySelector(".content").scrollIntoView({ behavior: "smooth", block: "start" });
+      toast("success", "Dashboard summary is this search workspace for now.");
+      toggleDrawer(false);
+    });
     els.historyShortcut.addEventListener("click", scrollToHistory);
     els.historyNav.addEventListener("click", () => {
       scrollToHistory();
+      toggleDrawer(false);
+    });
+    els.templatesNav.addEventListener("click", () => {
+      els.message.focus();
+      toast("success", "Use Template applies the approved substitution SMS once an order and products are selected.");
+      toggleDrawer(false);
+    });
+    els.settingsNav.addEventListener("click", () => {
+      toast("success", "Settings are managed through Netlify environment variables for this version.");
+      toggleDrawer(false);
+    });
+    els.backupNav.addEventListener("click", () => {
+      toast("success", "Backups are managed in GitHub/Netlify. Message history is stored through the configured storage provider.");
+      toggleDrawer(false);
+    });
+    els.sidebarLogoutButton.addEventListener("click", () => {
+      logout();
       toggleDrawer(false);
     });
     els.menuButton.addEventListener("click", () => toggleDrawer(true));

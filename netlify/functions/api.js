@@ -13,6 +13,7 @@ const {
   findOrder,
   getOrderById,
   getVariantById,
+  hasConfig,
   searchProductsForSubstitutions,
   searchSubstitutionsForLineItem
 } = require("../../src/shopify");
@@ -129,6 +130,7 @@ async function handleProductSearch(event) {
   const query = String(body.query || "").trim();
   if (!query) return error(400, "INVALID_REQUEST", "Product search is required.");
   if (query.length > 120) return error(400, "INVALID_REQUEST", "Product search is too long.");
+  if (!hasConfig()) return error(500, "SHOPIFY_ERROR", "Shopify Admin API is not configured.");
 
   const products = await searchProductsForSubstitutions(query);
   return json(200, { success: true, products });
