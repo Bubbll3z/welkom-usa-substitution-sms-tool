@@ -1,0 +1,19 @@
+{
+  "name": "welkom-substitution-sms-tool",
+  "version": "1.0.0",
+  "description": "Welkom USA internal substitution SMS tool for Netlify.",
+  "scripts": {
+    "test": "node --test",
+    "dev": "node scripts/dev-server.js",
+    "build": "node scripts/build-check.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "twilio": "^5.4.3"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "private": true,
+  "license": "UNLICENSED"
+}

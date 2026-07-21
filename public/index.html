@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Welkom USA Substitution SMS</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      color: #172b28;
+      background: #f4f7f5;
+    }
+
+    .layout {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 190px 1fr;
+    }
+
+    .sidebar {
+      background: #ffffff;
+      border-right: 1px solid #dfe8e3;
+      padding: 22px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+    }
+
+    .brand-mark {
+      font-size: 34px;
+      font-weight: 900;
+      letter-spacing: -1px;
+      color: #111111;
+      line-height: 0.9;
+    }
+
+    .brand-subtitle {
+      display: block;
+      margin-top: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      color: #58756d;
+    }
+
+    .nav {
+      display: grid;
+      gap: 6px;
+    }
+
+    .nav-item {
+      padding: 11px 12px;
+      border-radius: 6px;
+      color: #405b54;
+      font-size: 14px;
+    }
+
+    .nav-item.active {
+      background: #006b4f;
+      color: #ffffff;
+      font-weight: 700;
+    }
+
+    .version {
+      margin-top: auto;
+      color: #7d928c;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .app {
+      padding: 26px 30px 18px;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 28px;
+      color: #172b28;
+    }
+
+    .subtitle {
+      margin: 6px 0 0;
+      color: #6b7f7a;
+      font-size: 14px;
+    }
+
+    .account {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: #334e48;
+      font-size: 14px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: #e6f5ee;
+      color: #006b4f;
+      font-weight: 700;
+      font-size: 12px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(360px, 0.95fr) minmax(420px, 1.05fr);
+      gap: 22px;
+      align-items: start;
+    }
+
+    .panel {
+      background: #ffffff;
+      border: 1px solid #dfe8e3;
+      border-radius: 8px;
+      box-shadow: 0 14px 34px rgba(18, 52, 43, 0.07);
+    }
+
+    .panel-section {
+      padding: 18px;
+      border-bottom: 1px solid #edf2ef;
+    }
+
+    .panel-section:last-child {
+      border-bottom: 0;
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 16px;
+      color: #183b34;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 7px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #405b54;
+    }
+
+    input,
+    textarea,
+    select {
+      width: 100%;
+      border: 1px solid #cbd9d3;
+      border-radius: 6px;
+      padding: 11px 12px;
+      font: inherit;
+      color: #172b28;
+      background: #ffffff;
+    }
+
+    textarea {
+      min-height: 154px;
+      resize: vertical;
+      line-height: 1.45;
+    }
+
+    input:focus,
+    textarea:focus,
+    select:focus {
+      outline: none;
+      border-color: #006b4f;
+      box-shadow: 0 0 0 3px rgba(0, 107, 79, 0.14);
+    }
+
+    .field {
+      margin-bottom: 14px;
+    }
+
+    .search-row {
+      display: grid;
+      grid-template-columns: 1fr 112px;
+      gap: 10px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 6px;
+      padding: 11px 14px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .button-primary {
+      background: #006b4f;
+      color: #ffffff;
+    }
+
+    .button-secondary {
+      background: #eff6f3;
+      color: #006b4f;
+      border: 1px solid #b8d6cb;
+    }
+
+    .details-grid {
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      row-gap: 8px;
+      column-gap: 12px;
+      font-size: 14px;
+    }
+
+    .details-grid dt {
+      color: #6b7f7a;
+      margin: 0;
+    }
+
+    .details-grid dd {
+      margin: 0;
+      font-weight: 700;
+      color: #263f39;
+    }
+
+    .item-list,
+    .substitution-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .item-button,
+    .sub-button {
+      display: grid;
+      grid-template-columns: 52px 1fr auto;
+      gap: 12px;
+      align-items: center;
+      width: 100%;
+      padding: 10px;
+      background: #ffffff;
+      border: 1px solid #dbe7e2;
+      color: #1f342f;
+      text-align: left;
+    }
+
+    .item-button.selected,
+    .sub-button.selected {
+      border-color: #006b4f;
+      box-shadow: 0 0 0 3px rgba(0, 107, 79, 0.1);
+    }
+
+    .thumb {
+      width: 52px;
+      aspect-ratio: 1;
+      border-radius: 6px;
+      background: #edf2ef;
+      object-fit: cover;
+    }
+
+    .item-title {
+      display: block;
+      font-weight: 800;
+      font-size: 13px;
+    }
+
+    .item-meta {
+      display: block;
+      margin-top: 4px;
+      color: #6b7f7a;
+      font-size: 12px;
+      font-weight: 400;
+    }
+
+    .price {
+      color: #263f39;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .tokens {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-top: 10px;
+    }
+
+    .token {
+      padding: 5px 8px;
+      border-radius: 999px;
+      background: #e6f5ee;
+      color: #006b4f;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .preview {
+      margin-top: 14px;
+      padding: 24px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #f7fbf9, #edf8f3);
+      border: 1px solid #dcebe5;
+    }
+
+    .bubble {
+      max-width: 340px;
+      margin: 0 auto;
+      padding: 15px;
+      border-radius: 12px;
+      background: #ffffff;
+      box-shadow: 0 10px 25px rgba(18, 52, 43, 0.12);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .counter {
+      margin-top: 7px;
+      text-align: right;
+      color: #6b7f7a;
+      font-size: 12px;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .status {
+      display: none;
+      margin-top: 14px;
+      padding: 11px 12px;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+
+    .status.success {
+      display: block;
+      background: #e2f4ea;
+      color: #006b4f;
+      border: 1px solid #b8d6cb;
+    }
+
+    .status.error {
+      display: block;
+      background: #fde8e8;
+      color: #9b1c1c;
+      border: 1px solid #f8b4b4;
+    }
+
+    .empty {
+      padding: 14px;
+      border: 1px dashed #cbd9d3;
+      border-radius: 6px;
+      color: #6b7f7a;
+      font-size: 13px;
+      background: #fbfdfc;
+    }
+
+    footer {
+      margin-top: 18px;
+      text-align: center;
+      color: #7d928c;
+      font-size: 12px;
+    }
+
+    @media (max-width: 980px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        display: none;
+      }
+
+      .app {
+        padding: 18px;
+      }
+
+      .topbar,
+      .grid {
+        display: block;
+      }
+
+      .account {
+        margin-top: 12px;
+      }
+
+      .panel {
+        margin-bottom: 18px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div>
+        <div class="brand-mark">WE</div>
+        <span class="brand-subtitle">WELKOM USA</span>
+      </div>
+      <nav class="nav">
+        <div class="nav-item active">Search Order</div>
+        <div class="nav-item">Sent Messages</div>
+        <div class="nav-item">Templates</div>
+        <div class="nav-item">Settings</div>
+        <div class="nav-item">Backup</div>
+      </nav>
+      <div class="version">2026 Welkom USA<br>SMS App</div>
+    </aside>
+
+    <main class="app">
+      <header class="topbar">
+        <div>
+          <h1>Substitution SMS</h1>
+          <p class="subtitle">Search an order to view customer details, order items and send a substitution message.</p>
+        </div>
+        <div class="account">
+          <span class="badge">Sent Messages</span>
+          <strong>Welkom USA</strong>
+        </div>
+      </header>
+
+      <div class="grid">
+        <section class="panel">
+          <div class="panel-section">
+            <h2>Search Order</h2>
+            <div class="field">
+              <label for="password">Staff password</label>
+              <input id="password" type="password" autocomplete="current-password">
+            </div>
+            <div class="search-row">
+              <input id="orderQuery" type="text" placeholder="Enter order number e.g. #1023">
+              <button id="searchButton" class="button-primary" type="button">Search</button>
+            </div>
+          </div>
+
+          <div class="panel-section">
+            <h2>Customer Details</h2>
+            <dl id="customerDetails" class="details-grid">
+              <dt>Name</dt><dd>-</dd>
+              <dt>Phone</dt><dd>-</dd>
+              <dt>Email</dt><dd>-</dd>
+              <dt>Ship To</dt><dd>-</dd>
+            </dl>
+          </div>
+
+          <div class="panel-section">
+            <h2>Order Summary</h2>
+            <dl id="orderDetails" class="details-grid">
+              <dt>Order Number</dt><dd>-</dd>
+              <dt>Status</dt><dd>-</dd>
+              <dt>Items</dt><dd>-</dd>
+            </dl>
+          </div>
+
+          <div class="panel-section">
+            <h2>Unavailable Item</h2>
+            <div id="lineItems" class="item-list">
+              <div class="empty">Search an order first.</div>
+            </div>
+          </div>
+
+          <div class="panel-section">
+            <h2>Substitution Options</h2>
+            <div id="substitutions" class="substitution-list">
+              <div class="empty">Select an unavailable item to review substitution options.</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-section">
+            <h2>Substitution Message</h2>
+            <p class="subtitle" id="messageHelp">Select an order, unavailable item and substitute item.</p>
+            <textarea id="message" maxlength="320"></textarea>
+            <div id="counter" class="counter">0 / 320</div>
+            <div class="tokens">
+              <span class="token">[FIRST NAME]</span>
+              <span class="token">[ORDER NUMBER]</span>
+              <span class="token">[UNAVAILABLE ITEM]</span>
+              <span class="token">[SUBSTITUTE ITEM]</span>
+            </div>
+          </div>
+
+          <div class="panel-section">
+            <h2>Message Preview</h2>
+            <div class="preview">
+              <div id="previewBubble" class="bubble">Build a message by selecting an order and products.</div>
+            </div>
+            <div class="actions">
+              <button id="copyButton" class="button-secondary" type="button">Copy Message</button>
+              <button id="sendButton" class="button-primary" type="button">Send SMS</button>
+            </div>
+            <div id="status" class="status" role="status" aria-live="polite"></div>
+          </div>
+        </section>
+      </div>
+
+      <footer>Messages are sent via Twilio. STOP to opt out. HELP for help.</footer>
+    </main>
+  </div>
+
+  <script>
+    const password = document.getElementById("password");
+    const orderQuery = document.getElementById("orderQuery");
+    const searchButton = document.getElementById("searchButton");
+    const customerDetails = document.getElementById("customerDetails");
+    const orderDetails = document.getElementById("orderDetails");
+    const lineItems = document.getElementById("lineItems");
+    const substitutions = document.getElementById("substitutions");
+    const message = document.getElementById("message");
+    const previewBubble = document.getElementById("previewBubble");
+    const counter = document.getElementById("counter");
+    const statusBox = document.getElementById("status");
+    const copyButton = document.getElementById("copyButton");
+    const sendButton = document.getElementById("sendButton");
+
+    const state = {
+      order: null,
+      unavailableItem: null,
+      substituteItem: null
+    };
+
+    function showStatus(type, text) {
+      statusBox.className = `status ${type}`;
+      statusBox.textContent = text;
+    }
+
+    function clearStatus() {
+      statusBox.className = "status";
+      statusBox.textContent = "";
+    }
+
+    function updateCounter() {
+      counter.textContent = `${message.value.length} / 320`;
+      previewBubble.textContent = message.value || "Build a message by selecting an order and products.";
+    }
+
+    function detailsHtml(rows) {
+      return rows.map(([label, value]) => `<dt>${label}</dt><dd>${value || "-"}</dd>`).join("");
+    }
+
+    function safeImage(src) {
+      return src ? `<img class="thumb" src="${src}" alt="">` : `<div class="thumb"></div>`;
+    }
+
+    function buildMessage() {
+      if (!state.order || !state.unavailableItem || !state.substituteItem) return;
+      const firstName = state.order.customer.firstName || "there";
+      const orderNumber = (state.order.name || "").replace(/^#/, "");
+      message.value = `Welkom USA: Hi ${firstName}, ${state.unavailableItem.title} in order #${orderNumber} is unavailable. We can substitute it with ${state.substituteItem.title}. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.`;
+      updateCounter();
+    }
+
+    function renderOrder(order) {
+      state.order = order;
+      state.unavailableItem = null;
+      state.substituteItem = null;
+      message.value = "";
+      updateCounter();
+      customerDetails.innerHTML = detailsHtml([
+        ["Name", `${order.customer.firstName || ""} ${order.customer.lastName || ""}`.trim()],
+        ["Phone", order.customer.redactedPhone],
+        ["Email", order.customer.email],
+        ["Ship To", [order.shippingAddress.city, order.shippingAddress.province, order.shippingAddress.zip].filter(Boolean).join(", ")]
+      ]);
+      orderDetails.innerHTML = detailsHtml([
+        ["Order Number", order.name],
+        ["Status", order.displayFulfillmentStatus || "Unknown"],
+        ["Items", String(order.lineItems.length)]
+      ]);
+      lineItems.innerHTML = "";
+      order.lineItems.forEach((item) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "item-button";
+        button.innerHTML = `${safeImage(item.imageUrl)}<span><span class="item-title">${item.title}</span><span class="item-meta">Quantity: ${item.quantity}${item.sku ? ` · SKU: ${item.sku}` : ""}</span></span><span class="price">${item.price || ""}</span>`;
+        button.addEventListener("click", () => {
+          state.unavailableItem = item;
+          document.querySelectorAll(".item-button").forEach((el) => el.classList.remove("selected"));
+          button.classList.add("selected");
+          buildMessage();
+        });
+        lineItems.appendChild(button);
+      });
+      renderSubstitutions(order.substitutionProducts || []);
+    }
+
+    function renderSubstitutions(products) {
+      substitutions.innerHTML = "";
+      if (!products.length) {
+        substitutions.innerHTML = "<div class=\"empty\">No Shopify product suggestions found. Type the substitute item into the message manually.</div>";
+        return;
+      }
+      products.forEach((product) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "sub-button";
+        button.innerHTML = `${safeImage(product.imageUrl)}<span><span class="item-title">${product.title}</span><span class="item-meta">${product.variantTitle || "Default"} · ${product.status || "active"}</span></span><span class="price">${product.price || ""}</span>`;
+        button.addEventListener("click", () => {
+          state.substituteItem = product;
+          document.querySelectorAll(".sub-button").forEach((el) => el.classList.remove("selected"));
+          button.classList.add("selected");
+          buildMessage();
+        });
+        substitutions.appendChild(button);
+      });
+    }
+
+    searchButton.addEventListener("click", async () => {
+      clearStatus();
+      if (!password.value || !orderQuery.value.trim()) {
+        showStatus("error", "Staff password and order number are required.");
+        return;
+      }
+      searchButton.disabled = true;
+      searchButton.textContent = "Searching...";
+      try {
+        const response = await fetch("/api/order-search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: password.value, query: orderQuery.value.trim() })
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+          showStatus("error", result.error || "Order lookup failed.");
+          return;
+        }
+        renderOrder(result.order);
+        showStatus("success", `${result.order.name} loaded from Shopify.`);
+      } catch (error) {
+        showStatus("error", "Could not reach the order lookup service.");
+      } finally {
+        searchButton.disabled = false;
+        searchButton.textContent = "Search";
+      }
+    });
+
+    copyButton.addEventListener("click", async () => {
+      if (!message.value.trim()) {
+        showStatus("error", "Build a message first.");
+        return;
+      }
+      await navigator.clipboard.writeText(message.value);
+      showStatus("success", "Message copied.");
+    });
+
+    sendButton.addEventListener("click", async () => {
+      clearStatus();
+      if (!state.order || !message.value.trim()) {
+        showStatus("error", "Load an order and build a message first.");
+        return;
+      }
+      sendButton.disabled = true;
+      sendButton.textContent = "Sending...";
+      try {
+        const response = await fetch("/api/send-substitution-sms", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            password: password.value,
+            phone: state.order.customer.phone,
+            firstName: state.order.customer.firstName,
+            orderName: state.order.name,
+            unavailableItem: state.unavailableItem ? state.unavailableItem.title : "",
+            substituteItem: state.substituteItem ? state.substituteItem.title : "",
+            message: message.value
+          })
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+          showStatus("error", result.error || "SMS could not be sent.");
+          return;
+        }
+        showStatus("success", result.message || "SMS sent successfully.");
+      } catch (error) {
+        showStatus("error", "Could not reach the SMS service.");
+      } finally {
+        sendButton.disabled = false;
+        sendButton.textContent = "Send SMS";
+      }
+    });
+
+    message.addEventListener("input", updateCounter);
+    updateCounter();
+  </script>
+</body>
+</html>
