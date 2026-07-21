@@ -5,47 +5,110 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Welkom USA Substitution SMS</title>
   <style>
+    :root {
+      --green: #006b4f;
+      --green-hover: #005640;
+      --green-soft: #eff8f4;
+      --bg: #f7f8f8;
+      --card: #ffffff;
+      --text: #151a1e;
+      --muted: #65717c;
+      --border: #e2e7e5;
+      --warning-bg: #fff4d8;
+      --warning-text: #a66000;
+      --error: #c92a2a;
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+      --radius: 10px;
+    }
+
     * {
       box-sizing: border-box;
     }
 
+    html {
+      min-width: 0;
+    }
+
     body {
       margin: 0;
-      font-family: Arial, sans-serif;
-      color: #172b28;
-      background: #f4f7f5;
+      min-width: 0;
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    button,
+    input,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      min-height: 44px;
+      border: 0;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    button:focus-visible,
+    input:focus-visible,
+    textarea:focus-visible,
+    select:focus-visible {
+      outline: 3px solid rgba(0, 107, 79, 0.22);
+      outline-offset: 2px;
     }
 
     .layout {
       min-height: 100vh;
       display: grid;
-      grid-template-columns: 190px 1fr;
+      grid-template-columns: 210px minmax(0, 1fr);
     }
 
     .sidebar {
-      background: #ffffff;
-      border-right: 1px solid #dfe8e3;
-      padding: 22px 18px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
       display: flex;
       flex-direction: column;
       gap: 22px;
+      padding: 22px 16px 18px;
+      background: var(--card);
+      border-right: 1px solid var(--border);
+      z-index: 20;
     }
 
-    .brand-mark {
-      font-size: 34px;
-      font-weight: 900;
-      letter-spacing: -1px;
-      color: #111111;
-      line-height: 0.9;
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 4px 6px 14px;
     }
 
-    .brand-subtitle {
+    .brand-logo {
+      display: grid;
+      place-items: center;
+      width: 54px;
+      height: 44px;
+      color: #070707;
+      font-size: 27px;
+      font-weight: 950;
+      letter-spacing: -2px;
+      line-height: 1;
+    }
+
+    .brand small {
       display: block;
-      margin-top: 4px;
+      margin-top: 2px;
+      color: var(--muted);
       font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.8px;
-      color: #58756d;
+      font-weight: 800;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
     }
 
     .nav {
@@ -54,646 +117,1517 @@
     }
 
     .nav-item {
-      padding: 11px 12px;
-      border-radius: 6px;
-      color: #405b54;
-      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 10px 12px;
+      background: transparent;
+      color: #3c474f;
+      text-align: left;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .nav-item:hover {
+      background: var(--green-soft);
+      color: var(--green);
     }
 
     .nav-item.active {
-      background: #006b4f;
+      background: var(--green);
       color: #ffffff;
-      font-weight: 700;
     }
 
-    .version {
+    .nav-icon {
+      width: 17px;
+      height: 17px;
+      flex: 0 0 auto;
+    }
+
+    .sidebar-foot {
       margin-top: auto;
-      color: #7d928c;
-      font-size: 12px;
-      line-height: 1.4;
+      color: #8a969d;
+      font-size: 11px;
+      line-height: 1.55;
+      padding: 0 6px;
     }
 
-    .app {
-      padding: 26px 30px 18px;
+    .main-shell {
+      min-width: 0;
     }
 
     .topbar {
+      min-height: 96px;
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      margin-bottom: 24px;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 22px 28px;
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .mobile-menu {
+      display: none;
+      width: 44px;
+      background: var(--green);
+      color: #ffffff;
     }
 
     h1 {
       margin: 0;
-      font-size: 28px;
-      color: #172b28;
+      font-size: 24px;
+      line-height: 1.15;
+      letter-spacing: 0;
     }
 
-    .subtitle {
-      margin: 6px 0 0;
-      color: #6b7f7a;
-      font-size: 14px;
+    .supporting {
+      margin: 7px 0 0;
+      color: var(--muted);
+      font-size: 13px;
     }
 
-    .account {
+    .account-bar {
       display: flex;
       align-items: center;
-      gap: 12px;
-      color: #334e48;
-      font-size: 14px;
+      gap: 16px;
+      color: #2f3a42;
+      font-size: 13px;
+      white-space: nowrap;
     }
 
-    .badge {
+    .shortcut {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      padding: 7px 10px;
-      border-radius: 999px;
-      background: #e6f5ee;
-      color: #006b4f;
-      font-weight: 700;
-      font-size: 12px;
+      gap: 7px;
+      border: 0;
+      background: transparent;
+      color: var(--green);
+      font-size: 13px;
+      font-weight: 750;
+      min-height: 36px;
+      padding: 5px 8px;
     }
 
-    .grid {
+    .user-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .avatar {
       display: grid;
-      grid-template-columns: minmax(360px, 0.95fr) minmax(420px, 1.05fr);
+      place-items: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: #f3d983;
+      color: #34310d;
+      font-size: 11px;
+      font-weight: 850;
+    }
+
+    .content {
+      max-width: 1450px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: minmax(360px, 0.72fr) minmax(520px, 1fr);
       gap: 22px;
       align-items: start;
     }
 
-    .panel {
-      background: #ffffff;
-      border: 1px solid #dfe8e3;
-      border-radius: 8px;
-      box-shadow: 0 14px 34px rgba(18, 52, 43, 0.07);
+    .column {
+      display: grid;
+      gap: 14px;
     }
 
-    .panel-section {
-      padding: 18px;
-      border-bottom: 1px solid #edf2ef;
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
     }
 
-    .panel-section:last-child {
-      border-bottom: 0;
+    .card-pad {
+      padding: 16px;
+    }
+
+    .card-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
     }
 
     h2 {
-      margin: 0 0 12px;
-      font-size: 16px;
-      color: #183b34;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0;
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    h2.warning-title {
+      color: #b43f3f;
+    }
+
+    .fine {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
     }
 
     label {
       display: block;
       margin-bottom: 7px;
-      font-size: 13px;
-      font-weight: 700;
-      color: #405b54;
+      color: #344047;
+      font-size: 12px;
+      font-weight: 760;
     }
 
     input,
     textarea,
     select {
       width: 100%;
-      border: 1px solid #cbd9d3;
-      border-radius: 6px;
-      padding: 11px 12px;
-      font: inherit;
-      color: #172b28;
+      border: 1px solid #d7dfdc;
+      border-radius: 7px;
       background: #ffffff;
+      color: var(--text);
+      padding: 10px 11px;
+      font-size: 13px;
+    }
+
+    input::placeholder,
+    textarea::placeholder {
+      color: #98a2a8;
     }
 
     textarea {
-      min-height: 154px;
+      min-height: 210px;
       resize: vertical;
-      line-height: 1.45;
-    }
-
-    input:focus,
-    textarea:focus,
-    select:focus {
-      outline: none;
-      border-color: #006b4f;
-      box-shadow: 0 0 0 3px rgba(0, 107, 79, 0.14);
-    }
-
-    .field {
-      margin-bottom: 14px;
+      line-height: 1.52;
+      padding-bottom: 34px;
     }
 
     .search-row {
       display: grid;
-      grid-template-columns: 1fr 112px;
+      grid-template-columns: minmax(0, 1fr) 104px;
       gap: 10px;
+      align-items: end;
     }
 
-    button {
-      border: 0;
-      border-radius: 6px;
-      padding: 11px 14px;
-      font: inherit;
-      font-weight: 700;
-      cursor: pointer;
+    .field {
+      margin-bottom: 12px;
     }
 
-    button:disabled {
-      opacity: 0.55;
-      cursor: not-allowed;
+    .btn-primary,
+    .btn-outline,
+    .btn-soft,
+    .btn-danger {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 800;
     }
 
-    .button-primary {
-      background: #006b4f;
+    .btn-primary {
+      background: var(--green);
       color: #ffffff;
     }
 
-    .button-secondary {
-      background: #eff6f3;
-      color: #006b4f;
-      border: 1px solid #b8d6cb;
+    .btn-primary:hover:not(:disabled) {
+      background: var(--green-hover);
     }
 
-    .details-grid {
+    .btn-outline {
+      border: 1px solid #b8c8c2;
+      background: #ffffff;
+      color: #344047;
+    }
+
+    .btn-outline:hover:not(:disabled),
+    .btn-soft:hover:not(:disabled) {
+      border-color: var(--green);
+      color: var(--green);
+      background: var(--green-soft);
+    }
+
+    .btn-soft {
+      border: 1px solid #d7e9e1;
+      background: var(--green-soft);
+      color: var(--green);
+    }
+
+    .btn-danger {
+      background: #fff1f1;
+      color: var(--error);
+      border: 1px solid #f2c8c8;
+    }
+
+    .details {
       display: grid;
-      grid-template-columns: 120px 1fr;
-      row-gap: 8px;
-      column-gap: 12px;
-      font-size: 14px;
+      grid-template-columns: 122px minmax(0, 1fr);
+      gap: 8px 12px;
+      margin: 0;
+      font-size: 12px;
     }
 
-    .details-grid dt {
-      color: #6b7f7a;
+    .details dt {
       margin: 0;
+      color: var(--muted);
+      font-weight: 650;
     }
 
-    .details-grid dd {
+    .details dd {
+      min-width: 0;
       margin: 0;
-      font-weight: 700;
-      color: #263f39;
+      color: #29343a;
+      font-weight: 760;
+      overflow-wrap: anywhere;
+    }
+
+    .green-text {
+      color: var(--green);
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-height: 22px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: var(--green-soft);
+      color: var(--green);
+      font-size: 10px;
+      font-weight: 850;
+      vertical-align: middle;
+    }
+
+    .badge.warn {
+      background: var(--warning-bg);
+      color: var(--warning-text);
+    }
+
+    .badge.error {
+      background: #ffe9e9;
+      color: var(--error);
+    }
+
+    .consent-row {
+      display: flex;
+      gap: 9px;
+      align-items: flex-start;
+      margin-top: 12px;
+      padding: 10px;
+      border-radius: 8px;
+      background: #fbfcfc;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .consent-row input {
+      width: 16px;
+      height: 16px;
+      margin-top: 1px;
+      accent-color: var(--green);
     }
 
     .item-list,
-    .substitution-list {
+    .sub-list,
+    .history-list {
       display: grid;
-      gap: 10px;
+      gap: 9px;
     }
 
-    .item-button,
-    .sub-button {
+    .product-row {
       display: grid;
-      grid-template-columns: 52px 1fr auto;
-      gap: 12px;
+      grid-template-columns: 18px 48px minmax(0, 1fr) auto;
+      gap: 10px;
       align-items: center;
       width: 100%;
-      padding: 10px;
+      min-height: 70px;
+      padding: 9px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
       background: #ffffff;
-      border: 1px solid #dbe7e2;
-      color: #1f342f;
+      color: var(--text);
       text-align: left;
     }
 
-    .item-button.selected,
-    .sub-button.selected {
-      border-color: #006b4f;
-      box-shadow: 0 0 0 3px rgba(0, 107, 79, 0.1);
+    .product-row.no-radio {
+      grid-template-columns: 48px minmax(0, 1fr) auto;
+    }
+
+    .product-row:hover {
+      border-color: #bfd2ca;
+      background: #fbfdfc;
+    }
+
+    .product-row.selected {
+      border-color: var(--green);
+      background: var(--green-soft);
+      box-shadow: 0 0 0 2px rgba(0, 107, 79, 0.08);
+    }
+
+    .radio-dot {
+      width: 15px;
+      height: 15px;
+      border-radius: 50%;
+      border: 1.5px solid #9aaaa2;
+      background: #ffffff;
+      box-shadow: inset 0 0 0 4px #ffffff;
+    }
+
+    .selected .radio-dot {
+      border-color: var(--green);
+      background: var(--green);
     }
 
     .thumb {
-      width: 52px;
-      aspect-ratio: 1;
+      width: 48px;
+      height: 48px;
       border-radius: 6px;
-      background: #edf2ef;
       object-fit: cover;
+      background: #edf1ef;
+      border: 1px solid #e5ebe8;
     }
 
-    .item-title {
+    .thumb-placeholder {
+      display: grid;
+      place-items: center;
+      color: #8b9a94;
+      font-size: 10px;
+      font-weight: 850;
+    }
+
+    .product-title {
       display: block;
-      font-weight: 800;
-      font-size: 13px;
+      color: #202a30;
+      font-size: 12px;
+      font-weight: 850;
+      line-height: 1.25;
     }
 
-    .item-meta {
+    .product-meta {
       display: block;
       margin-top: 4px;
-      color: #6b7f7a;
-      font-size: 12px;
-      font-weight: 400;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 1.3;
     }
 
-    .price {
-      color: #263f39;
-      font-size: 13px;
-      font-weight: 800;
+    .product-side {
+      display: grid;
+      justify-items: end;
+      gap: 5px;
+      color: #273239;
+      font-size: 12px;
+      font-weight: 850;
+      white-space: nowrap;
+    }
+
+    .search-inline {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 92px;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .message-card {
+      position: sticky;
+      top: 18px;
+    }
+
+    .message-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+
+    .textarea-wrap {
+      position: relative;
+    }
+
+    .counter {
+      position: absolute;
+      right: 11px;
+      bottom: 9px;
+      color: var(--muted);
+      font-size: 11px;
+      background: rgba(255, 255, 255, 0.92);
+      padding: 2px 4px;
+    }
+
+    .tokens-label {
+      margin: 13px 0 8px;
+      color: #344047;
+      font-size: 12px;
+      font-weight: 760;
     }
 
     .tokens {
       display: flex;
       flex-wrap: wrap;
       gap: 7px;
-      margin-top: 10px;
     }
 
     .token {
-      padding: 5px 8px;
+      min-height: 28px;
+      border: 1px solid #cbe5da;
       border-radius: 999px;
-      background: #e6f5ee;
-      color: #006b4f;
-      font-size: 11px;
-      font-weight: 800;
+      background: var(--green-soft);
+      color: var(--green);
+      padding: 5px 9px;
+      font-size: 10px;
+      font-weight: 850;
     }
 
-    .preview {
-      margin-top: 14px;
-      padding: 24px;
-      border-radius: 8px;
-      background: linear-gradient(135deg, #f7fbf9, #edf8f3);
+    .preview-panel {
+      margin-top: 16px;
+      padding: 16px;
       border: 1px solid #dcebe5;
+      border-radius: 9px;
+      background: var(--green-soft);
     }
 
-    .bubble {
-      max-width: 340px;
-      margin: 0 auto;
-      padding: 15px;
-      border-radius: 12px;
-      background: #ffffff;
-      box-shadow: 0 10px 25px rgba(18, 52, 43, 0.12);
-      font-size: 13px;
-      line-height: 1.45;
-    }
-
-    .counter {
-      margin-top: 7px;
-      text-align: right;
-      color: #6b7f7a;
+    .preview-panel h3 {
+      margin: 0 0 14px;
+      color: var(--green);
       font-size: 12px;
+      letter-spacing: 0;
     }
 
-    .actions {
+    .phone-bubble {
+      width: min(360px, 100%);
+      margin: 0 auto;
+      padding: 15px 15px 10px;
+      border-radius: 11px;
+      background: #ffffff;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.09);
+      color: #283138;
+      font-size: 12px;
+      line-height: 1.48;
+    }
+
+    .bubble-time {
+      display: block;
+      margin-top: 8px;
+      color: #8a959b;
+      text-align: right;
+      font-size: 10px;
+      font-weight: 650;
+    }
+
+    .message-actions {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 12px;
-      margin-top: 16px;
-    }
-
-    .status {
-      display: none;
       margin-top: 14px;
-      padding: 11px 12px;
-      border-radius: 6px;
-      font-size: 14px;
     }
 
-    .status.success {
-      display: block;
-      background: #e2f4ea;
-      color: #006b4f;
-      border: 1px solid #b8d6cb;
+    .info-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-top: 13px;
+      color: var(--muted);
+      font-size: 11px;
     }
 
-    .status.error {
-      display: block;
-      background: #fde8e8;
-      color: #9b1c1c;
-      border: 1px solid #f8b4b4;
-    }
-
-    .empty {
-      padding: 14px;
-      border: 1px dashed #cbd9d3;
-      border-radius: 6px;
-      color: #6b7f7a;
-      font-size: 13px;
+    .empty,
+    .notice {
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px dashed #cbd8d3;
       background: #fbfdfc;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
     }
 
-    footer {
+    .notice.warn {
+      border-style: solid;
+      background: var(--warning-bg);
+      color: var(--warning-text);
+    }
+
+    .notice.error {
+      border-style: solid;
+      background: #fff0f0;
+      color: var(--error);
+      border-color: #f0c2c2;
+    }
+
+    .toast-stack {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      display: grid;
+      gap: 8px;
+      width: min(360px, calc(100vw - 36px));
+      z-index: 80;
+    }
+
+    .toast {
+      padding: 12px 13px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #ffffff;
+      box-shadow: 0 14px 30px rgba(0, 0, 0, 0.1);
+      color: #2a343a;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .toast.success {
+      border-color: #b9d9cc;
+      color: var(--green);
+    }
+
+    .toast.error {
+      border-color: #efb7b7;
+      color: var(--error);
+    }
+
+    .modal-backdrop,
+    .drawer-backdrop {
+      position: fixed;
+      inset: 0;
+      display: none;
+      background: rgba(16, 24, 28, 0.38);
+      z-index: 60;
+    }
+
+    .modal-backdrop.open,
+    .drawer-backdrop.open {
+      display: block;
+    }
+
+    .modal {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      width: min(460px, calc(100vw - 34px));
+      transform: translate(-50%, -50%);
+      background: #ffffff;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.25);
+      z-index: 70;
+      padding: 18px;
+    }
+
+    .modal h3 {
+      margin: 0 0 8px;
+      font-size: 17px;
+    }
+
+    .modal p {
+      margin: 0 0 14px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .modal-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .history-list {
+      max-height: 220px;
+      overflow: auto;
+    }
+
+    .history-item {
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fbfdfc;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .history-item strong {
+      display: block;
+      margin-bottom: 2px;
+      color: var(--text);
+    }
+
+    .footer {
       margin-top: 18px;
       text-align: center;
-      color: #7d928c;
-      font-size: 12px;
+      color: #7c888f;
+      font-size: 11px;
     }
 
-    @media (max-width: 980px) {
+    .hidden {
+      display: none !important;
+    }
+
+    @media (max-width: 1100px) {
       .layout {
-        grid-template-columns: 1fr;
+        grid-template-columns: 176px minmax(0, 1fr);
       }
 
       .sidebar {
+        padding-left: 12px;
+        padding-right: 12px;
+      }
+
+      .dashboard-grid {
+        grid-template-columns: minmax(320px, 0.82fr) minmax(420px, 1fr);
+        gap: 16px;
+      }
+
+      .content {
+        padding: 18px;
+      }
+    }
+
+    @media (max-width: 860px) {
+      .layout {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .sidebar {
+        position: fixed;
+        left: 0;
+        top: 0;
+        width: 240px;
+        transform: translateX(-105%);
+        transition: transform 160ms ease;
+      }
+
+      .sidebar.open {
+        transform: translateX(0);
+      }
+
+      .mobile-menu {
+        display: inline-grid;
+        place-items: center;
+      }
+
+      .topbar {
+        min-height: 86px;
+        padding: 16px;
+        align-items: flex-start;
+      }
+
+      .account-bar {
+        gap: 8px;
+        font-size: 12px;
+      }
+
+      .shortcut {
         display: none;
       }
 
-      .app {
-        padding: 18px;
+      .dashboard-grid {
+        grid-template-columns: minmax(0, 1fr);
       }
 
-      .topbar,
-      .grid {
-        display: block;
+      .message-card {
+        position: static;
+      }
+    }
+
+    @media (max-width: 520px) {
+      .topbar {
+        display: grid;
+        grid-template-columns: 44px minmax(0, 1fr);
       }
 
-      .account {
-        margin-top: 12px;
+      .account-bar {
+        grid-column: 2;
+        justify-content: flex-start;
       }
 
-      .panel {
-        margin-bottom: 18px;
+      h1 {
+        font-size: 21px;
+      }
+
+      .content {
+        padding: 14px;
+      }
+
+      .search-row,
+      .search-inline,
+      .message-actions,
+      .modal-actions {
+        grid-template-columns: 1fr;
+      }
+
+      .details {
+        grid-template-columns: 105px minmax(0, 1fr);
+      }
+
+      .product-row {
+        grid-template-columns: 18px 42px minmax(0, 1fr);
+      }
+
+      .product-row.no-radio {
+        grid-template-columns: 42px minmax(0, 1fr);
+      }
+
+      .product-side {
+        grid-column: 3;
+        justify-items: start;
+      }
+
+      .thumb {
+        width: 42px;
+        height: 42px;
       }
     }
   </style>
 </head>
 <body>
   <div class="layout">
-    <aside class="sidebar">
-      <div>
-        <div class="brand-mark">WE</div>
-        <span class="brand-subtitle">WELKOM USA</span>
+    <aside id="sidebar" class="sidebar" aria-label="Main navigation">
+      <div class="brand" aria-label="Welkom USA SMS App">
+        <div class="brand-logo">WE</div>
+        <div>
+          <strong>Welkom USA</strong>
+          <small>SMS App</small>
+        </div>
       </div>
+
       <nav class="nav">
-        <div class="nav-item active">Search Order</div>
-        <div class="nav-item">Sent Messages</div>
-        <div class="nav-item">Templates</div>
-        <div class="nav-item">Settings</div>
-        <div class="nav-item">Backup</div>
+        <button class="nav-item active" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg>Search Order</button>
+        <button class="nav-item" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 13h6v7H4zM14 4h6v16h-6zM4 4h6v5H4z"/></svg>Dashboard</button>
+        <button class="nav-item" type="button" id="historyNav"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>Sent Messages</button>
+        <button class="nav-item" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h10a2 2 0 0 1 2 2v16l-7-4-7 4V5a2 2 0 0 1 2-2z"/></svg>Templates</button>
+        <button class="nav-item" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21h-4v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1-2.8-2.8.1-.1A1.7 1.7 0 0 0 4.6 15 1.7 1.7 0 0 0 3.1 14H3v-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 2.8-2.8.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.5V3h4v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1 2.8 2.8-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1h.1v4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
+        <button class="nav-item" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>Backup</button>
       </nav>
-      <div class="version">2026 Welkom USA<br>SMS App</div>
+
+      <button class="nav-item" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M21 3v18"/></svg>Logout</button>
+      <div class="sidebar-foot">© 2026 Welkom USA<br>SMS App</div>
     </aside>
 
-    <main class="app">
+    <div class="drawer-backdrop" id="drawerBackdrop"></div>
+
+    <div class="main-shell">
       <header class="topbar">
+        <button id="menuButton" class="mobile-menu" type="button" aria-label="Open navigation">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
         <div>
           <h1>Substitution SMS</h1>
-          <p class="subtitle">Search an order to view customer details, order items and send a substitution message.</p>
+          <p class="supporting">Search an order to view customer details, order items and send a substitution message.</p>
         </div>
-        <div class="account">
-          <span class="badge">Sent Messages</span>
-          <strong>Welkom USA</strong>
+        <div class="account-bar">
+          <button class="shortcut" id="historyShortcut" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>Sent Messages</button>
+          <span class="user-pill"><span class="avatar">WA</span><strong>Welkom USA</strong><span aria-hidden="true">⌄</span></span>
         </div>
       </header>
 
-      <div class="grid">
-        <section class="panel">
-          <div class="panel-section">
-            <h2>Search Order</h2>
-            <div class="field">
-              <label for="password">Staff password</label>
-              <input id="password" type="password" autocomplete="current-password">
-            </div>
-            <div class="search-row">
-              <input id="orderQuery" type="text" placeholder="Enter order number e.g. #1023">
-              <button id="searchButton" class="button-primary" type="button">Search</button>
-            </div>
-          </div>
+      <main class="content">
+        <div class="dashboard-grid">
+          <section class="column" aria-label="Order details">
+            <article class="card">
+              <div class="card-pad">
+                <div class="card-title">
+                  <h2>Search Order</h2>
+                  <span id="searchState" class="fine">Ready</span>
+                </div>
+                <div class="field">
+                  <label for="password">Staff password</label>
+                  <input id="password" type="password" autocomplete="current-password">
+                </div>
+                <div class="search-row">
+                  <div>
+                    <label for="orderQuery">Order number</label>
+                    <input id="orderQuery" type="text" placeholder="Enter order number (e.g. #1023)" autocomplete="off">
+                  </div>
+                  <button id="searchButton" class="btn-primary" type="button">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg>
+                    Search
+                  </button>
+                </div>
+              </div>
+            </article>
 
-          <div class="panel-section">
-            <h2>Customer Details</h2>
-            <dl id="customerDetails" class="details-grid">
-              <dt>Name</dt><dd>-</dd>
-              <dt>Phone</dt><dd>-</dd>
-              <dt>Email</dt><dd>-</dd>
-              <dt>Ship To</dt><dd>-</dd>
-            </dl>
-          </div>
+            <article class="card">
+              <div class="card-pad">
+                <div class="card-title">
+                  <h2>Customer Details</h2>
+                  <span id="consentBadge" class="badge warn">Consent not recorded</span>
+                </div>
+                <dl id="customerDetails" class="details"></dl>
+                <label class="consent-row">
+                  <input id="consentCheck" type="checkbox">
+                  <span>I confirm this customer has SMS opt-in/consent recorded before sending.</span>
+                </label>
+              </div>
+            </article>
 
-          <div class="panel-section">
-            <h2>Order Summary</h2>
-            <dl id="orderDetails" class="details-grid">
-              <dt>Order Number</dt><dd>-</dd>
-              <dt>Status</dt><dd>-</dd>
-              <dt>Items</dt><dd>-</dd>
-            </dl>
-          </div>
+            <article class="card">
+              <div class="card-pad">
+                <h2>Order Summary</h2>
+                <dl id="orderDetails" class="details"></dl>
+              </div>
+            </article>
 
-          <div class="panel-section">
-            <h2>Unavailable Item</h2>
-            <div id="lineItems" class="item-list">
-              <div class="empty">Search an order first.</div>
+            <article class="card">
+              <div class="card-pad">
+                <h2 class="warning-title">Unavailable Item</h2>
+                <div id="lineItems" class="item-list"></div>
+              </div>
+            </article>
+
+            <article class="card">
+              <div class="card-pad">
+                <div class="card-title">
+                  <h2>Substitution Options</h2>
+                  <span id="subSearchState" class="fine">Shopify suggestions</span>
+                </div>
+                <div class="search-inline">
+                  <input id="subSearch" type="search" placeholder="Search title, SKU, or barcode" aria-label="Search Shopify products">
+                  <button id="subSearchButton" class="btn-outline" type="button">Search</button>
+                </div>
+                <div id="substitutions" class="sub-list"></div>
+                <button id="customSubButton" class="btn-outline" type="button" style="width:100%; margin-top:10px;">+ Add Custom Substitute</button>
+              </div>
+            </article>
+
+            <article class="card" id="historyCard">
+              <div class="card-pad">
+                <div class="card-title">
+                  <h2>Sent Messages</h2>
+                  <button id="clearHistoryButton" class="btn-outline" type="button">Clear</button>
+                </div>
+                <div id="historyList" class="history-list"></div>
+              </div>
+            </article>
+          </section>
+
+          <section class="card message-card" aria-label="Substitution message">
+            <div class="card-pad">
+              <div class="message-header">
+                <div>
+                  <h2><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>Substitution Message</h2>
+                  <p id="messageHelp" class="supporting">Select an order, unavailable item and substitute item.</p>
+                </div>
+                <button id="templateButton" class="btn-outline" type="button">Use Template ▾</button>
+              </div>
+
+              <label for="message">Editable SMS message</label>
+              <div class="textarea-wrap">
+                <textarea id="message" maxlength="320" placeholder="Your substitution message will appear here."></textarea>
+                <div id="counter" class="counter">0 / 320 · 0 segment</div>
+              </div>
+
+              <div class="tokens-label">Personalization tokens:</div>
+              <div class="tokens" aria-label="Personalization tokens">
+                <button class="token" type="button" data-token="[FIRST NAME]">[FIRST NAME]</button>
+                <button class="token" type="button" data-token="[ORDER NUMBER]">[ORDER NUMBER]</button>
+                <button class="token" type="button" data-token="[UNAVAILABLE ITEM]">[UNAVAILABLE ITEM]</button>
+                <button class="token" type="button" data-token="[SUBSTITUTE ITEM]">[SUBSTITUTE ITEM]</button>
+              </div>
+
+              <div id="sendReadiness" class="notice warn" style="margin-top:14px;">Load an order and select products before sending.</div>
+
+              <div class="preview-panel">
+                <h3>Message Preview</h3>
+                <div class="phone-bubble">
+                  <span id="previewBubble">Build a message by selecting an order and products.</span>
+                  <span class="bubble-time" id="previewTime">12:30 PM</span>
+                </div>
+              </div>
+
+              <div class="info-row">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+                Standard SMS rates may apply to the recipient.
+              </div>
+
+              <div class="message-actions">
+                <button id="copyButton" class="btn-outline" type="button">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  Copy Message
+                </button>
+                <button id="sendButton" class="btn-primary" type="button">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+                  Send SMS
+                </button>
+              </div>
             </div>
-          </div>
+          </section>
+        </div>
 
-          <div class="panel-section">
-            <h2>Substitution Options</h2>
-            <div id="substitutions" class="substitution-list">
-              <div class="empty">Select an unavailable item to review substitution options.</div>
-            </div>
-          </div>
-        </section>
-
-        <section class="panel">
-          <div class="panel-section">
-            <h2>Substitution Message</h2>
-            <p class="subtitle" id="messageHelp">Select an order, unavailable item and substitute item.</p>
-            <textarea id="message" maxlength="320"></textarea>
-            <div id="counter" class="counter">0 / 320</div>
-            <div class="tokens">
-              <span class="token">[FIRST NAME]</span>
-              <span class="token">[ORDER NUMBER]</span>
-              <span class="token">[UNAVAILABLE ITEM]</span>
-              <span class="token">[SUBSTITUTE ITEM]</span>
-            </div>
-          </div>
-
-          <div class="panel-section">
-            <h2>Message Preview</h2>
-            <div class="preview">
-              <div id="previewBubble" class="bubble">Build a message by selecting an order and products.</div>
-            </div>
-            <div class="actions">
-              <button id="copyButton" class="button-secondary" type="button">Copy Message</button>
-              <button id="sendButton" class="button-primary" type="button">Send SMS</button>
-            </div>
-            <div id="status" class="status" role="status" aria-live="polite"></div>
-          </div>
-        </section>
-      </div>
-
-      <footer>Messages are sent via Twilio. STOP to opt out. HELP for help.</footer>
-    </main>
+        <p class="footer">Messages are sent via Twilio. STOP to opt out. HELP for help.</p>
+      </main>
+    </div>
   </div>
 
+  <div id="modalBackdrop" class="modal-backdrop" role="presentation">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+      <h3 id="confirmTitle">Send substitution SMS?</h3>
+      <p id="confirmBody">Please confirm before sending this message to the customer.</p>
+      <div class="modal-actions">
+        <button id="cancelSendButton" class="btn-outline" type="button">Cancel</button>
+        <button id="confirmSendButton" class="btn-primary" type="button">Send SMS</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toastStack" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
+
   <script>
-    const password = document.getElementById("password");
-    const orderQuery = document.getElementById("orderQuery");
-    const searchButton = document.getElementById("searchButton");
-    const customerDetails = document.getElementById("customerDetails");
-    const orderDetails = document.getElementById("orderDetails");
-    const lineItems = document.getElementById("lineItems");
-    const substitutions = document.getElementById("substitutions");
-    const message = document.getElementById("message");
-    const previewBubble = document.getElementById("previewBubble");
-    const counter = document.getElementById("counter");
-    const statusBox = document.getElementById("status");
-    const copyButton = document.getElementById("copyButton");
-    const sendButton = document.getElementById("sendButton");
+    const els = {
+      sidebar: document.getElementById("sidebar"),
+      drawerBackdrop: document.getElementById("drawerBackdrop"),
+      menuButton: document.getElementById("menuButton"),
+      password: document.getElementById("password"),
+      orderQuery: document.getElementById("orderQuery"),
+      searchButton: document.getElementById("searchButton"),
+      searchState: document.getElementById("searchState"),
+      customerDetails: document.getElementById("customerDetails"),
+      orderDetails: document.getElementById("orderDetails"),
+      lineItems: document.getElementById("lineItems"),
+      substitutions: document.getElementById("substitutions"),
+      subSearch: document.getElementById("subSearch"),
+      subSearchButton: document.getElementById("subSearchButton"),
+      subSearchState: document.getElementById("subSearchState"),
+      customSubButton: document.getElementById("customSubButton"),
+      message: document.getElementById("message"),
+      previewBubble: document.getElementById("previewBubble"),
+      previewTime: document.getElementById("previewTime"),
+      counter: document.getElementById("counter"),
+      copyButton: document.getElementById("copyButton"),
+      sendButton: document.getElementById("sendButton"),
+      sendReadiness: document.getElementById("sendReadiness"),
+      messageHelp: document.getElementById("messageHelp"),
+      templateButton: document.getElementById("templateButton"),
+      consentCheck: document.getElementById("consentCheck"),
+      consentBadge: document.getElementById("consentBadge"),
+      modalBackdrop: document.getElementById("modalBackdrop"),
+      confirmBody: document.getElementById("confirmBody"),
+      cancelSendButton: document.getElementById("cancelSendButton"),
+      confirmSendButton: document.getElementById("confirmSendButton"),
+      toastStack: document.getElementById("toastStack"),
+      historyList: document.getElementById("historyList"),
+      clearHistoryButton: document.getElementById("clearHistoryButton"),
+      historyShortcut: document.getElementById("historyShortcut"),
+      historyNav: document.getElementById("historyNav")
+    };
+
+    const STORAGE_KEY = "welkomSmsHistory";
+    const TEMPLATE = "Welkom USA: Hi [FIRST NAME], [UNAVAILABLE ITEM] in order #[ORDER NUMBER] is unavailable. We can substitute it with [SUBSTITUTE ITEM]. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.";
 
     const state = {
       order: null,
       unavailableItem: null,
-      substituteItem: null
+      substituteItem: null,
+      history: readHistory()
     };
 
-    function showStatus(type, text) {
-      statusBox.className = `status ${type}`;
-      statusBox.textContent = text;
+    function iconSafeText(value) {
+      return String(value || "").replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "\"": "&quot;",
+        "'": "&#39;"
+      }[char]));
     }
 
-    function clearStatus() {
-      statusBox.className = "status";
-      statusBox.textContent = "";
+    function toast(type, message) {
+      const node = document.createElement("div");
+      node.className = `toast ${type}`;
+      node.textContent = message;
+      els.toastStack.appendChild(node);
+      setTimeout(() => node.remove(), 4200);
     }
 
-    function updateCounter() {
-      counter.textContent = `${message.value.length} / 320`;
-      previewBubble.textContent = message.value || "Build a message by selecting an order and products.";
+    function setSearchState(text, type = "") {
+      els.searchState.textContent = text;
+      els.searchState.style.color = type === "error" ? "var(--error)" : type === "success" ? "var(--green)" : "var(--muted)";
+    }
+
+    function setEmptyOrder() {
+      els.customerDetails.innerHTML = detailsHtml([
+        ["Name", "-"],
+        ["Phone", "-"],
+        ["Email", "-"],
+        ["Order Date", "-"],
+        ["Shipping Address", "-"]
+      ]);
+      els.orderDetails.innerHTML = detailsHtml([
+        ["Order Number", "-"],
+        ["Total", "-"],
+        ["Status", "-"],
+        ["Items", "-"]
+      ]);
+      els.lineItems.innerHTML = `<div class="empty">Search an order first.</div>`;
+      els.substitutions.innerHTML = `<div class="empty">Select an unavailable item to review substitution options.</div>`;
+      updateConsentBadge();
     }
 
     function detailsHtml(rows) {
-      return rows.map(([label, value]) => `<dt>${label}</dt><dd>${value || "-"}</dd>`).join("");
+      return rows.map(([label, value]) => `<dt>${iconSafeText(label)}</dt><dd>${value || "-"}</dd>`).join("");
     }
 
-    function safeImage(src) {
-      return src ? `<img class="thumb" src="${src}" alt="">` : `<div class="thumb"></div>`;
+    function productImage(src, title) {
+      if (src) return `<img class="thumb" src="${iconSafeText(src)}" alt="${iconSafeText(title)}">`;
+      return `<div class="thumb thumb-placeholder" aria-hidden="true">WE</div>`;
     }
 
-    function buildMessage() {
+    function formatAddress(order) {
+      const address = order?.shippingAddress || {};
+      return [address.name, address.city, address.province, address.zip, address.country].filter(Boolean).join(", ");
+    }
+
+    function formatDate(value) {
+      if (!value) return "-";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "-";
+      return date.toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" });
+    }
+
+    function orderNumberClean() {
+      return String(state.order?.name || "").replace(/^#/, "");
+    }
+
+    function fillTemplate() {
       if (!state.order || !state.unavailableItem || !state.substituteItem) return;
-      const firstName = state.order.customer.firstName || "there";
-      const orderNumber = (state.order.name || "").replace(/^#/, "");
-      message.value = `Welkom USA: Hi ${firstName}, ${state.unavailableItem.title} in order #${orderNumber} is unavailable. We can substitute it with ${state.substituteItem.title}. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.`;
-      updateCounter();
+      const firstName = state.order.customer?.firstName || "there";
+      const values = {
+        "[FIRST NAME]": firstName,
+        "[ORDER NUMBER]": orderNumberClean(),
+        "[UNAVAILABLE ITEM]": state.unavailableItem.title || "your item",
+        "[SUBSTITUTE ITEM]": state.substituteItem.title || "a substitute item"
+      };
+      els.message.value = TEMPLATE.replace(/\[FIRST NAME\]|\[ORDER NUMBER\]|\[UNAVAILABLE ITEM\]|\[SUBSTITUTE ITEM\]/g, (token) => values[token]);
+      updateMessageState();
+    }
+
+    function smsSegments(text) {
+      if (!text.length) return 0;
+      if (text.length <= 160) return 1;
+      return Math.ceil(text.length / 153);
+    }
+
+    function updateMessageState() {
+      const count = els.message.value.length;
+      const segments = smsSegments(els.message.value);
+      els.counter.textContent = `${count} / 320 · ${segments} segment${segments === 1 ? "" : "s"}`;
+      els.previewBubble.textContent = els.message.value || "Build a message by selecting an order and products.";
+      const time = new Date();
+      els.previewTime.textContent = time.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      updateSendState();
+    }
+
+    function updateConsentBadge() {
+      if (els.consentCheck.checked) {
+        els.consentBadge.className = "badge";
+        els.consentBadge.textContent = "SMS Opt-In";
+      } else {
+        els.consentBadge.className = "badge warn";
+        els.consentBadge.textContent = "Consent not recorded";
+      }
+      updateSendState();
+    }
+
+    function missingSendRequirements() {
+      const missing = [];
+      if (!state.order) missing.push("an order is loaded");
+      if (!state.order?.customer?.phone) missing.push("a customer phone number exists");
+      if (!els.consentCheck.checked) missing.push("SMS consent is recorded");
+      if (!state.unavailableItem) missing.push("an unavailable item is selected");
+      if (!state.substituteItem) missing.push("a substitute item is selected");
+      if (!els.message.value.trim()) missing.push("the message is not empty");
+      return missing;
+    }
+
+    function updateSendState() {
+      const missing = missingSendRequirements();
+      els.sendButton.disabled = missing.length > 0;
+      els.copyButton.disabled = !els.message.value.trim();
+      if (missing.length) {
+        els.sendReadiness.className = "notice warn";
+        els.sendReadiness.textContent = `Before sending, confirm: ${missing.join(", ")}.`;
+      } else {
+        els.sendReadiness.className = "notice";
+        els.sendReadiness.textContent = "Ready to send after final confirmation.";
+      }
+      els.messageHelp.textContent = state.order?.customer?.redactedPhone
+        ? `This message will be sent to ${state.order.customer.redactedPhone}`
+        : "Select an order, unavailable item and substitute item.";
     }
 
     function renderOrder(order) {
       state.order = order;
       state.unavailableItem = null;
       state.substituteItem = null;
-      message.value = "";
-      updateCounter();
-      customerDetails.innerHTML = detailsHtml([
-        ["Name", `${order.customer.firstName || ""} ${order.customer.lastName || ""}`.trim()],
-        ["Phone", order.customer.redactedPhone],
-        ["Email", order.customer.email],
-        ["Ship To", [order.shippingAddress.city, order.shippingAddress.province, order.shippingAddress.zip].filter(Boolean).join(", ")]
+      els.message.value = "";
+      els.consentCheck.checked = Boolean(order.customer?.phone);
+
+      const phone = order.customer?.redactedPhone || "-";
+      els.customerDetails.innerHTML = detailsHtml([
+        ["Name", iconSafeText(`${order.customer?.firstName || ""} ${order.customer?.lastName || ""}`.trim())],
+        ["Phone", `${iconSafeText(phone)} ${els.consentCheck.checked ? '<span class="badge">SMS Opt-In</span>' : ""}`],
+        ["Email", iconSafeText(order.customer?.email || "-")],
+        ["Order Date", iconSafeText(formatDate(order.processedAt))],
+        ["Shipping Address", iconSafeText(formatAddress(order))]
       ]);
-      orderDetails.innerHTML = detailsHtml([
-        ["Order Number", order.name],
-        ["Status", order.displayFulfillmentStatus || "Unknown"],
-        ["Items", String(order.lineItems.length)]
+
+      const status = order.displayFulfillmentStatus || "Unknown";
+      els.orderDetails.innerHTML = detailsHtml([
+        ["Order Number", `<span class="green-text">${iconSafeText(order.name)}</span>`],
+        ["Total", "Unavailable from current Shopify response"],
+        ["Status", `<span class="badge warn">${iconSafeText(status.replaceAll("_", " "))}</span>`],
+        ["Items", iconSafeText(`${order.lineItems.length} item${order.lineItems.length === 1 ? "" : "s"}`)]
       ]);
-      lineItems.innerHTML = "";
-      order.lineItems.forEach((item) => {
+
+      renderLineItems(order.lineItems || []);
+      renderSubstitutions(order.substitutionProducts || []);
+      updateConsentBadge();
+      updateMessageState();
+    }
+
+    function renderLineItems(items) {
+      if (!items.length) {
+        els.lineItems.innerHTML = `<div class="empty">No ordered items were returned by Shopify.</div>`;
+        return;
+      }
+
+      els.lineItems.innerHTML = "";
+      items.forEach((item) => {
         const button = document.createElement("button");
         button.type = "button";
-        button.className = "item-button";
-        button.innerHTML = `${safeImage(item.imageUrl)}<span><span class="item-title">${item.title}</span><span class="item-meta">Quantity: ${item.quantity}${item.sku ? ` · SKU: ${item.sku}` : ""}</span></span><span class="price">${item.price || ""}</span>`;
+        button.className = "product-row";
+        button.innerHTML = `
+          <span class="radio-dot" aria-hidden="true"></span>
+          ${productImage(item.imageUrl, item.title)}
+          <span>
+            <span class="product-title">${iconSafeText(item.title)}</span>
+            <span class="product-meta">${iconSafeText(item.variantTitle || "Default")} · Quantity: ${iconSafeText(item.quantity)}${item.sku ? ` · SKU: ${iconSafeText(item.sku)}` : ""}</span>
+          </span>
+          <span class="product-side">${iconSafeText(item.price || "")}</span>
+        `;
         button.addEventListener("click", () => {
           state.unavailableItem = item;
-          document.querySelectorAll(".item-button").forEach((el) => el.classList.remove("selected"));
+          document.querySelectorAll("#lineItems .product-row").forEach((el) => el.classList.remove("selected"));
           button.classList.add("selected");
-          buildMessage();
+          fillTemplate();
+          updateSendState();
         });
-        lineItems.appendChild(button);
+        els.lineItems.appendChild(button);
       });
-      renderSubstitutions(order.substitutionProducts || []);
+    }
+
+    function priceDifferenceBadge(product) {
+      if (!state.unavailableItem?.price || !product.price) return `<span class="badge">Available</span>`;
+      const base = Number(String(state.unavailableItem.price).replace(/[^0-9.-]/g, ""));
+      const next = Number(String(product.price).replace(/[^0-9.-]/g, ""));
+      if (Number.isNaN(base) || Number.isNaN(next)) return `<span class="badge">Available</span>`;
+      const diff = next - base;
+      if (Math.abs(diff) < 0.01) return `<span class="badge">Same price</span>`;
+      return `<span class="badge ${diff > 0 ? "warn" : ""}">${diff > 0 ? "+" : "-"}$${Math.abs(diff).toFixed(2)}</span>`;
     }
 
     function renderSubstitutions(products) {
-      substitutions.innerHTML = "";
       if (!products.length) {
-        substitutions.innerHTML = "<div class=\"empty\">No Shopify product suggestions found. Type the substitute item into the message manually.</div>";
+        els.substitutions.innerHTML = `<div class="empty">No Shopify product suggestions found yet. Search by title, SKU, or barcode, or add a custom substitute.</div>`;
         return;
       }
+
+      els.substitutions.innerHTML = "";
       products.forEach((product) => {
         const button = document.createElement("button");
         button.type = "button";
-        button.className = "sub-button";
-        button.innerHTML = `${safeImage(product.imageUrl)}<span><span class="item-title">${product.title}</span><span class="item-meta">${product.variantTitle || "Default"} · ${product.status || "active"}</span></span><span class="price">${product.price || ""}</span>`;
+        button.className = "product-row";
+        const stockBadge = product.status && product.status !== "ACTIVE" ? `<span class="badge error">Out of stock</span>` : `<span class="badge">In stock</span>`;
+        button.innerHTML = `
+          <span class="radio-dot" aria-hidden="true"></span>
+          ${productImage(product.imageUrl, product.title)}
+          <span>
+            <span class="product-title">${iconSafeText(product.title)}</span>
+            <span class="product-meta">${iconSafeText(product.variantTitle || "Default")} · ${stockBadge}</span>
+          </span>
+          <span class="product-side">
+            <span>${iconSafeText(product.price || "")}</span>
+            ${priceDifferenceBadge(product)}
+          </span>
+        `;
         button.addEventListener("click", () => {
           state.substituteItem = product;
-          document.querySelectorAll(".sub-button").forEach((el) => el.classList.remove("selected"));
+          document.querySelectorAll("#substitutions .product-row").forEach((el) => el.classList.remove("selected"));
           button.classList.add("selected");
-          buildMessage();
+          fillTemplate();
+          updateSendState();
         });
-        substitutions.appendChild(button);
+        els.substitutions.appendChild(button);
       });
     }
 
-    searchButton.addEventListener("click", async () => {
-      clearStatus();
-      if (!password.value || !orderQuery.value.trim()) {
-        showStatus("error", "Staff password and order number are required.");
+    async function searchOrder() {
+      if (!els.password.value || !els.orderQuery.value.trim()) {
+        toast("error", "Staff password and order number are required.");
+        setSearchState("Missing details", "error");
         return;
       }
-      searchButton.disabled = true;
-      searchButton.textContent = "Searching...";
+
+      els.searchButton.disabled = true;
+      els.searchButton.innerHTML = "Searching...";
+      setSearchState("Loading...");
+
       try {
         const response = await fetch("/api/order-search", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ password: password.value, query: orderQuery.value.trim() })
+          body: JSON.stringify({ password: els.password.value, query: els.orderQuery.value.trim() })
         });
         const result = await response.json();
         if (!response.ok || !result.success) {
-          showStatus("error", result.error || "Order lookup failed.");
-          return;
+          throw new Error(result.error || "Order lookup failed.");
         }
         renderOrder(result.order);
-        showStatus("success", `${result.order.name} loaded from Shopify.`);
+        setSearchState("Order loaded", "success");
+        toast("success", `${result.order.name} loaded from Shopify.`);
       } catch (error) {
-        showStatus("error", "Could not reach the order lookup service.");
+        setSearchState("Lookup failed", "error");
+        toast("error", error.message || "Could not reach the order lookup service.");
       } finally {
-        searchButton.disabled = false;
-        searchButton.textContent = "Search";
+        els.searchButton.disabled = false;
+        els.searchButton.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg>Search`;
       }
-    });
+    }
 
-    copyButton.addEventListener("click", async () => {
-      if (!message.value.trim()) {
-        showStatus("error", "Build a message first.");
+    async function searchSubstitutions() {
+      const query = els.subSearch.value.trim();
+      if (!query) {
+        toast("error", "Enter a product title, SKU, or barcode to search.");
         return;
       }
-      await navigator.clipboard.writeText(message.value);
-      showStatus("success", "Message copied.");
-    });
-
-    sendButton.addEventListener("click", async () => {
-      clearStatus();
-      if (!state.order || !message.value.trim()) {
-        showStatus("error", "Load an order and build a message first.");
+      if (!els.password.value) {
+        toast("error", "Staff password is required for Shopify product search.");
         return;
       }
-      sendButton.disabled = true;
-      sendButton.textContent = "Sending...";
+
+      els.subSearchButton.disabled = true;
+      els.subSearchButton.textContent = "Searching...";
+      els.subSearchState.textContent = "Searching Shopify...";
+
+      try {
+        const response = await fetch("/api/product-search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: els.password.value, query })
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+          throw new Error(result.error || "Product search failed.");
+        }
+        renderSubstitutions(result.products || []);
+        els.subSearchState.textContent = `${(result.products || []).length} result${(result.products || []).length === 1 ? "" : "s"}`;
+      } catch (error) {
+        els.subSearchState.textContent = "Search failed";
+        toast("error", error.message || "Could not search Shopify products.");
+      } finally {
+        els.subSearchButton.disabled = false;
+        els.subSearchButton.textContent = "Search";
+      }
+    }
+
+    function addCustomSubstitute() {
+      const title = window.prompt("Enter the substitute product name exactly as staff should see it in the SMS:");
+      if (!title || !title.trim()) return;
+      state.substituteItem = {
+        id: `custom-${Date.now()}`,
+        title: title.trim(),
+        variantTitle: "Custom",
+        price: "",
+        imageUrl: "",
+        status: "ACTIVE"
+      };
+      renderSubstitutions([state.substituteItem]);
+      const first = document.querySelector("#substitutions .product-row");
+      if (first) first.classList.add("selected");
+      fillTemplate();
+      toast("success", "Custom substitute added.");
+    }
+
+    function insertToken(token) {
+      const start = els.message.selectionStart || 0;
+      const end = els.message.selectionEnd || 0;
+      els.message.value = `${els.message.value.slice(0, start)}${token}${els.message.value.slice(end)}`;
+      els.message.focus();
+      els.message.setSelectionRange(start + token.length, start + token.length);
+      updateMessageState();
+    }
+
+    async function copyMessage() {
+      if (!els.message.value.trim()) {
+        toast("error", "Build a message first.");
+        return;
+      }
+      await navigator.clipboard.writeText(els.message.value);
+      toast("success", "Message copied.");
+    }
+
+    function duplicateKey() {
+      return `${state.order?.name || ""}|${state.order?.customer?.phone || ""}|${els.message.value.trim()}`;
+    }
+
+    function openConfirmModal() {
+      const missing = missingSendRequirements();
+      if (missing.length) {
+        toast("error", `Cannot send yet: ${missing.join(", ")}.`);
+        return;
+      }
+      const duplicate = state.history.some((item) => item.key === duplicateKey());
+      els.confirmBody.textContent = duplicate
+        ? "This exact message appears to have already been sent or dry-run for this order. Send it again?"
+        : `Send this substitution SMS to ${state.order.customer.redactedPhone || "the customer"}?`;
+      els.modalBackdrop.classList.add("open");
+      els.confirmSendButton.focus();
+    }
+
+    function closeConfirmModal() {
+      els.modalBackdrop.classList.remove("open");
+    }
+
+    async function sendSms() {
+      closeConfirmModal();
+      els.sendButton.disabled = true;
+      els.confirmSendButton.disabled = true;
       try {
         const response = await fetch("/api/send-substitution-sms", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            password: password.value,
+            password: els.password.value,
             phone: state.order.customer.phone,
             firstName: state.order.customer.firstName,
             orderName: state.order.name,
-            unavailableItem: state.unavailableItem ? state.unavailableItem.title : "",
-            substituteItem: state.substituteItem ? state.substituteItem.title : "",
-            message: message.value
+            unavailableItem: state.unavailableItem.title,
+            substituteItem: state.substituteItem.title,
+            message: els.message.value
           })
         });
         const result = await response.json();
         if (!response.ok || !result.success) {
-          showStatus("error", result.error || "SMS could not be sent.");
-          return;
+          throw new Error(result.error || "SMS could not be sent.");
         }
-        showStatus("success", result.message || "SMS sent successfully.");
+        const providerStatus = result.providerStatus || (result.dryRun ? "dry-run" : "sent");
+        addHistory({
+          key: duplicateKey(),
+          orderName: state.order.name,
+          phone: state.order.customer.redactedPhone,
+          providerStatus,
+          message: els.message.value,
+          createdAt: new Date().toISOString()
+        });
+        toast("success", result.message || `SMS processed: ${providerStatus}.`);
       } catch (error) {
-        showStatus("error", "Could not reach the SMS service.");
+        toast("error", error.message || "Could not reach the SMS service.");
       } finally {
-        sendButton.disabled = false;
-        sendButton.textContent = "Send SMS";
+        els.confirmSendButton.disabled = false;
+        updateSendState();
       }
+    }
+
+    function readHistory() {
+      try {
+        return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+      } catch (error) {
+        return [];
+      }
+    }
+
+    function saveHistory() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state.history.slice(0, 30)));
+      renderHistory();
+    }
+
+    function addHistory(item) {
+      state.history.unshift(item);
+      saveHistory();
+    }
+
+    function renderHistory() {
+      if (!state.history.length) {
+        els.historyList.innerHTML = `<div class="empty">Sent and dry-run message history will appear here on this device.</div>`;
+        return;
+      }
+      els.historyList.innerHTML = state.history.map((item) => `
+        <div class="history-item">
+          <strong>${iconSafeText(item.orderName)} · ${iconSafeText(item.providerStatus)}</strong>
+          <span>${iconSafeText(new Date(item.createdAt).toLocaleString())} · ${iconSafeText(item.phone || "")}</span>
+        </div>
+      `).join("");
+    }
+
+    function scrollToHistory() {
+      document.getElementById("historyCard").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    function toggleDrawer(open) {
+      els.sidebar.classList.toggle("open", open);
+      els.drawerBackdrop.classList.toggle("open", open);
+    }
+
+    els.searchButton.addEventListener("click", searchOrder);
+    els.orderQuery.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") searchOrder();
+    });
+    els.subSearchButton.addEventListener("click", searchSubstitutions);
+    els.subSearch.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") searchSubstitutions();
+    });
+    els.customSubButton.addEventListener("click", addCustomSubstitute);
+    els.message.addEventListener("input", updateMessageState);
+    els.copyButton.addEventListener("click", copyMessage);
+    els.sendButton.addEventListener("click", openConfirmModal);
+    els.cancelSendButton.addEventListener("click", closeConfirmModal);
+    els.confirmSendButton.addEventListener("click", sendSms);
+    els.modalBackdrop.addEventListener("click", (event) => {
+      if (event.target === els.modalBackdrop) closeConfirmModal();
+    });
+    els.templateButton.addEventListener("click", fillTemplate);
+    els.consentCheck.addEventListener("change", updateConsentBadge);
+    els.clearHistoryButton.addEventListener("click", () => {
+      state.history = [];
+      saveHistory();
+      toast("success", "Message history cleared on this device.");
+    });
+    els.historyShortcut.addEventListener("click", scrollToHistory);
+    els.historyNav.addEventListener("click", () => {
+      scrollToHistory();
+      toggleDrawer(false);
+    });
+    els.menuButton.addEventListener("click", () => toggleDrawer(true));
+    els.drawerBackdrop.addEventListener("click", () => toggleDrawer(false));
+    document.querySelectorAll(".token").forEach((button) => {
+      button.addEventListener("click", () => insertToken(button.dataset.token));
     });
 
-    message.addEventListener("input", updateCounter);
-    updateCounter();
+    setEmptyOrder();
+    renderHistory();
+    updateMessageState();
   </script>
 </body>
 </html>

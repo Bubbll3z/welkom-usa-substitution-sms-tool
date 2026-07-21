@@ -1,6 +1,7 @@
 require("dotenv").config();
 
 const { findOrder } = require("../../src/shopify");
+const { searchProductsForSubstitutions } = require("../../src/shopify");
 const { buildSubstitutionMessage, sendSms } = require("../../src/sms");
 
 function json(statusCode, body) {
@@ -48,6 +49,26 @@ async function handleOrderSearch(event) {
 
   const result = await findOrder(body.query);
   return json(result.status, result.body);
+}
+
+async function handleProductSearch(event) {
+  const body = parseBody(event);
+  if (!body) return json(400, { success: false, error: "Request body must be valid JSON." });
+
+  const authError = checkStaffPassword(body.password);
+  if (authError) return json(authError.status, authError.body);
+
+  const query = String(body.query || "").trim();
+  if (!query) {
+    return json(400, { success: false, error: "Product search is required." });
+  }
+
+  if (query.length > 120) {
+    return json(400, { success: false, error: "Product search is too long." });
+  }
+
+  const products = await searchProductsForSubstitutions(query);
+  return json(200, { success: true, products });
 }
 
 async function handleSendSubstitutionSms(event) {
@@ -98,6 +119,10 @@ exports.handler = async (event) => {
 
   if (route === "order-search") {
     return handleOrderSearch(event);
+  }
+
+  if (route === "product-search") {
+    return handleProductSearch(event);
   }
 
   if (route === "send-substitution-sms") {

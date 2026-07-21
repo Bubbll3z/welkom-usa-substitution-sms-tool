@@ -133,8 +133,12 @@ async function searchProductsForSubstitutions(searchText, options = {}) {
     }
   `;
 
-  const firstWords = clean.split(/\s+/).slice(0, 4).join(" ");
-  const result = await shopifyGraphql(query, { query: `status:active title:${firstWords}` }, options);
+  const firstWords = clean.split(/\s+/).slice(0, 5).join(" ");
+  const compact = clean.replace(/[^\w-]/g, "");
+  const productQuery = compact && compact.length === clean.length
+    ? `status:active (${firstWords} OR sku:${compact} OR barcode:${compact})`
+    : `status:active ${firstWords}`;
+  const result = await shopifyGraphql(query, { query: productQuery }, options);
   if (!result.ok) return [];
   return (result.json.data?.products?.nodes || []).map(simplifyProduct);
 }
