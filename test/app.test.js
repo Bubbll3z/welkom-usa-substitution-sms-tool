@@ -14,6 +14,7 @@ process.env.MESSAGE_STORAGE_PROVIDER = "memory";
 const { handler } = require("../netlify/functions/api");
 const { verifySession } = require("../src/auth");
 const { clearMemoryHistory } = require("../src/history");
+const { resetStoreFactory, setStoreFactory } = require("../src/data-store");
 const { buildSubstitutionMessage, sendSms, smsLength, validateMessage } = require("../src/sms");
 const { consentFromAttributes, findOrder, getAccessToken, normalizeOrderQuery, searchProductsForSubstitutions } = require("../src/shopify");
 
@@ -186,6 +187,7 @@ test.beforeEach(() => {
   delete process.env.SHOPIFY_CLIENT_ID;
   delete process.env.SHOPIFY_CLIENT_SECRET;
   delete process.env.BLOB_INIT_ENABLED;
+  resetStoreFactory();
 });
 
 test("authentication supports login, session, logout, wrong password, and expired session", async () => {
@@ -485,6 +487,34 @@ test("dashboard, backup and filtered history endpoints are protected and do not 
     assert.doesNotMatch(csvBackup.body, /15551234567/);
   } finally {
     global.fetch = originalFetch;
+  }
+});
+
+test("dashboard still loads when message history storage is unavailable", async () => {
+  const cookie = await loginCookie();
+  process.env.MESSAGE_STORAGE_PROVIDER = "netlify-blobs";
+  setStoreFactory(() => ({
+    async list() {
+      throw new Error("storage unavailable");
+    },
+    async get() {
+      throw new Error("storage unavailable");
+    },
+    async setJSON() {
+      throw new Error("storage unavailable");
+    }
+  }));
+  try {
+    const dashboard = await handler(event("/api/dashboard", undefined, { cookie }, "GET"));
+    assert.equal(dashboard.statusCode, 200);
+    const body = JSON.parse(dashboard.body);
+    assert.equal(body.success, true);
+    assert.equal(body.stats.total, 0);
+    assert.equal(body.status.storageHealthy, false);
+    assert.match(body.warning, /storage/i);
+  } finally {
+    process.env.MESSAGE_STORAGE_PROVIDER = "memory";
+    resetStoreFactory();
   }
 });
 

@@ -380,10 +380,31 @@ async function handleHistory(event) {
 async function handleDashboard(event) {
   const auth = requireSession(event);
   if (auth.error) return auth.error;
+  const status = safeConfigStatus();
+  let stats;
+  let warning = "";
+  try {
+    stats = await messageStats();
+    status.storageHealthy = true;
+  } catch (storageError) {
+    console.error("Dashboard storage read error:", storageError.message);
+    status.storageHealthy = false;
+    warning = "Message history storage is not available yet. Dashboard totals will appear after Blob storage is initialized and the first message is recorded.";
+    stats = {
+      total: 0,
+      sentToday: 0,
+      sentLast7Days: 0,
+      failed: 0,
+      dryRun: 0,
+      production: 0,
+      recent: []
+    };
+  }
   return json(200, {
     success: true,
-    status: safeConfigStatus(),
-    stats: await messageStats()
+    status,
+    stats,
+    warning
   });
 }
 

@@ -2076,13 +2076,16 @@
         return;
       }
       const stats = result.stats || {};
+      if (result.warning) {
+        els.dashboardStats.append(el("div", "notice warn wide", result.warning));
+      }
       [
         ["Total", stats.total || 0],
-        ["Live Sent", stats.live || 0],
+        ["Live Sent", stats.production || 0],
         ["Dry Runs", stats.dryRun || 0],
         ["Failures", stats.failed || 0],
-        ["This Week", stats.last7Days || 0],
-        ["Today", stats.today || 0]
+        ["This Week", stats.sentLast7Days || 0],
+        ["Today", stats.sentToday || 0]
       ].forEach(([label, value]) => {
         const card = el("div", "metric");
         card.append(el("span", "fine", label));
@@ -2106,6 +2109,7 @@
         ["Dry run mode", status.dryRun ? "On" : "Off", statusBadge(!status.dryRun, "Live enabled", "Dry run")],
         ["Production sending", status.productionSendingEnabled ? "Enabled" : "Blocked", statusBadge(status.productionSendingEnabled, "Enabled", "Blocked")],
         ["Storage", `${status.storageProvider || "-"}${status.storagePersistent ? " persistent" : " memory"}`],
+        ["Storage health", status.storageHealthy === false ? "Needs first write" : "Available", statusBadge(status.storageHealthy !== false, "Available", "Needs init")],
         ["SMS consent required", status.consentEnforced ? "Yes" : "No", statusBadge(status.consentEnforced, "Required", "Disabled")],
         ["Cloudflare required", status.cloudflareRequired ? "Yes" : "No"]
       ]);
