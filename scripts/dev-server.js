@@ -27,9 +27,11 @@ function readBody(req) {
 
 const server = http.createServer(async (req, res) => {
   if (req.url.startsWith("/api/")) {
+    const [pathOnly, rawQuery = ""] = req.url.split("?");
     const result = await handler({
       httpMethod: req.method,
-      path: req.url.split("?")[0],
+      path: pathOnly,
+      rawQuery,
       headers: req.headers,
       body: await readBody(req)
     });

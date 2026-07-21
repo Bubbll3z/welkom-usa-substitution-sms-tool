@@ -8,6 +8,7 @@
     "build": "node scripts/build-check.js"
   },
   "dependencies": {
+    "@netlify/blobs": "^10.1.0",
     "dotenv": "^16.4.7",
     "twilio": "^5.4.3"
   },

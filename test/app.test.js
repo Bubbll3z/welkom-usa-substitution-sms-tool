@@ -1,43 +1,239 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const twilio = require("twilio");
 
 process.env.STAFF_PASSWORD = "test123";
+process.env.STAFF_NAME = "Test Staff";
+process.env.SESSION_SECRET = "12345678901234567890123456789012";
+process.env.SESSION_DURATION_MINUTES = "60";
 process.env.DRY_RUN = "true";
 process.env.SMS_DRY_RUN = "true";
+process.env.MESSAGE_STORAGE_PROVIDER = "memory";
 
 const { handler } = require("../netlify/functions/api");
-const { buildSubstitutionMessage, sendSms } = require("../src/sms");
-const { findOrder, normalizeOrderQuery } = require("../src/shopify");
+const { verifySession } = require("../src/auth");
+const { clearMemoryHistory } = require("../src/history");
+const { buildSubstitutionMessage, sendSms, smsLength, validateMessage } = require("../src/sms");
+const { consentFromAttributes, findOrder, normalizeOrderQuery, searchProductsForSubstitutions } = require("../src/shopify");
 
-function event(path, body, headers = {}) {
+function event(path, body, headers = {}, method = "POST") {
+  const [pathOnly, rawQuery = ""] = path.split("?");
   return {
-    httpMethod: "POST",
-    path,
+    httpMethod: method,
+    path: pathOnly,
+    rawQuery,
     headers: {
+      host: "localhost:3001",
+      "x-forwarded-proto": "http",
       "content-type": "application/json",
       ...headers
     },
-    body: JSON.stringify(body)
+    body: body === undefined ? "" : JSON.stringify(body)
   };
 }
 
-test("builds the approved substitution message", () => {
+function formEvent(path, body, signature) {
+  const [pathOnly, rawQuery = ""] = path.split("?");
+  return {
+    httpMethod: "POST",
+    path: pathOnly,
+    rawQuery,
+    headers: {
+      host: "example.netlify.app",
+      "x-forwarded-proto": "https",
+      "content-type": "application/x-www-form-urlencoded",
+      "x-twilio-signature": signature
+    },
+    body: new URLSearchParams(body).toString()
+  };
+}
+
+async function loginCookie(password = "test123") {
+  const response = await handler(event("/api/login", { password }));
+  assert.equal(response.statusCode, 200);
+  return response.headers["Set-Cookie"].split(";")[0];
+}
+
+function shopifyEnv() {
+  return {
+    SHOPIFY_SHOP_DOMAIN: "welkom-usa.myshopify.com",
+    SHOPIFY_ADMIN_ACCESS_TOKEN: "shpat_test",
+    SHOPIFY_API_VERSION: "2025-10"
+  };
+}
+
+function orderNode(overrides = {}) {
+  return {
+    id: "gid://shopify/Order/1",
+    name: "#1023",
+    phone: "",
+    processedAt: "2026-07-21T00:00:00Z",
+    displayFinancialStatus: "PAID",
+    displayFulfillmentStatus: "PARTIALLY_FULFILLED",
+    cancelledAt: null,
+    customAttributes: [{ key: "SMS consent", value: "Yes" }],
+    totalPriceSet: { shopMoney: { amount: "47.98", currencyCode: "USD" } },
+    customer: {
+      firstName: "Sarah",
+      lastName: "Johnson",
+      email: "sarah@example.com",
+      phone: "+15551234567"
+    },
+    shippingAddress: {
+      name: "Sarah Johnson",
+      address1: "123 Main St",
+      address2: "",
+      city: "Orlando",
+      province: "FL",
+      country: "USA",
+      zip: "32801",
+      phone: ""
+    },
+    billingAddress: { phone: "" },
+    lineItems: {
+      nodes: [
+        {
+          id: "gid://shopify/LineItem/1",
+          title: "Cadbury Crunchie Chocolate Bar 44g",
+          variantTitle: "",
+          quantity: 1,
+          sku: "CRUNCHIE44",
+          image: { url: "https://example.com/crunchie.jpg" },
+          variant: {
+            id: "gid://shopify/ProductVariant/old",
+            title: "Default Title",
+            sku: "CRUNCHIE44",
+            barcode: "600111",
+            availableForSale: true,
+            inventoryQuantity: 5,
+            image: { url: "" },
+            product: {
+              id: "gid://shopify/Product/old",
+              title: "Cadbury Crunchie Chocolate Bar 44g",
+              status: "ACTIVE",
+              featuredImage: { url: "https://example.com/crunchie.jpg" }
+            }
+          },
+          originalUnitPriceSet: { shopMoney: { amount: "0.99", currencyCode: "USD" } }
+        }
+      ]
+    },
+    ...overrides
+  };
+}
+
+function variantNode(overrides = {}) {
+  return {
+    id: "gid://shopify/ProductVariant/new",
+    title: "Default Title",
+    displayName: "Cadbury Flake Chocolate Bar 32g",
+    sku: "FLAKE32",
+    barcode: "600222",
+    price: { amount: "0.99", currencyCode: "USD" },
+    availableForSale: true,
+    inventoryQuantity: 12,
+    image: { url: "https://example.com/flake.jpg" },
+    product: {
+      id: "gid://shopify/Product/new",
+      title: "Cadbury Flake Chocolate Bar 32g",
+      status: "ACTIVE",
+      featuredImage: { url: "https://example.com/flake.jpg" }
+    },
+    ...overrides
+  };
+}
+
+function mockFetch({ order = orderNode(), variant = variantNode(), missingOrder = false } = {}) {
+  return async (url, options) => {
+    assert.match(url, /welkom-usa\.myshopify\.com/);
+    assert.equal(options.headers["X-Shopify-Access-Token"], "shpat_test");
+    const body = JSON.parse(options.body);
+    if (body.query.includes("SearchOrder")) {
+      return { ok: true, json: async () => ({ data: { orders: { nodes: missingOrder ? [] : [order] } } }) };
+    }
+    if (body.query.includes("GetOrder")) {
+      return { ok: true, json: async () => ({ data: { order: missingOrder ? null : order } }) };
+    }
+    if (body.query.includes("GetVariant")) {
+      return { ok: true, json: async () => ({ data: { productVariant: variant } }) };
+    }
+    if (body.query.includes("SubstitutionVariants")) {
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            productVariants: {
+              nodes: [
+                variant,
+                variantNode({ id: "gid://shopify/ProductVariant/draft", product: { ...variant.product, status: "DRAFT" } }),
+                variantNode({ id: "gid://shopify/ProductVariant/unavailable", availableForSale: false })
+              ]
+            }
+          }
+        })
+      };
+    }
+    throw new Error("Unexpected Shopify query");
+  };
+}
+
+test.beforeEach(() => {
+  clearMemoryHistory();
+  process.env.SHOPIFY_SHOP_DOMAIN = "welkom-usa.myshopify.com";
+  process.env.SHOPIFY_ADMIN_ACCESS_TOKEN = "shpat_test";
+  process.env.SHOPIFY_API_VERSION = "2025-10";
+});
+
+test("authentication supports login, session, logout, wrong password, and expired session", async () => {
+  const wrong = await handler(event("/api/login", { password: "wrong" }));
+  assert.equal(wrong.statusCode, 401);
+
+  const cookie = await loginCookie();
+  const token = cookie.split("=")[1];
+  assert.equal(verifySession(decodeURIComponent(token)).ok, true);
+  assert.equal(verifySession(decodeURIComponent(token), process.env, Date.now() + 90 * 60 * 1000).code, "AUTH_REQUIRED");
+
+  const session = await handler(event("/api/session", undefined, { cookie }, "GET"));
+  assert.equal(session.statusCode, 200);
+
+  const logout = await handler(event("/api/logout", {}, { cookie }));
+  assert.equal(logout.statusCode, 200);
+});
+
+test("unauthenticated API request is rejected", async () => {
+  const response = await handler(event("/api/order-search", { query: "#1023" }));
+  assert.equal(response.statusCode, 401);
+});
+
+test("builds and validates the approved substitution message", () => {
   const message = buildSubstitutionMessage({
     firstName: "Sarah",
     unavailableItem: "Cadbury Crunchie Chocolate Bar 44g",
     substituteItem: "Cadbury Flake Chocolate Bar 32g",
     orderName: "#1023"
   });
-
   assert.equal(
     message,
     "Welkom USA: Hi Sarah, Cadbury Crunchie Chocolate Bar 44g in order #1023 is unavailable. We can substitute it with Cadbury Flake Chocolate Bar 32g. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out."
   );
+  assert.equal(validateMessage(message, "#1023").ok, true);
+  assert.equal(validateMessage("Welkom USA: Hi [FIRST NAME]", "#1023").code, "MESSAGE_INVALID");
 });
 
-test("dry-run SMS does not call Twilio", async () => {
+test("calculates GSM-7 and Unicode SMS segments", () => {
+  assert.deepEqual(smsLength("a".repeat(160)), { encoding: "GSM-7", length: 160, segments: 1 });
+  assert.equal(smsLength("a".repeat(161)).segments, 2);
+  assert.deepEqual(smsLength("😀".repeat(70)), { encoding: "UCS-2", length: 70, segments: 1 });
+  assert.equal(smsLength("😀".repeat(71)).segments, 2);
+});
+
+test("dry-run SMS does not call Twilio and validates phone", async () => {
+  const invalid = await sendSms({ phone: "555", message: "Welkom USA: Hi Sarah, order #1023 test" });
+  assert.equal(invalid.body.code, "PHONE_INVALID");
+
   const result = await sendSms({
     phone: "+15555550123",
+    orderName: "#1023",
     message: "Welkom USA: Hi Sarah, Test Item in order #1023 is unavailable. We can substitute it with Test Substitute. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.",
     twilioClient: {
       messages: {
@@ -47,158 +243,147 @@ test("dry-run SMS does not call Twilio", async () => {
       }
     }
   });
-
   assert.equal(result.status, 200);
   assert.equal(result.body.dryRun, true);
-  assert.equal(result.body.providerStatus, "not-sent");
 });
 
-test("API rejects wrong staff password", async () => {
-  const response = await handler(event("/api/order-search", { password: "wrong", query: "#1023" }));
-  assert.equal(response.statusCode, 401);
+test("Shopify consent mapping and exact order search", async () => {
+  assert.deepEqual(consentFromAttributes([{ key: "sms CONSENT", value: "yes" }]), { granted: true, value: "yes" });
+  assert.deepEqual(consentFromAttributes([{ key: "SMS consent", value: "No" }]), { granted: false, value: "No" });
+  assert.equal(normalizeOrderQuery("#1023"), "1023");
+
+  const exact = await findOrder("#1023", { env: shopifyEnv(), fetchImpl: mockFetch() });
+  assert.equal(exact.status, 200);
+  assert.equal(exact.body.order.name, "#1023");
+  assert.equal(exact.body.order.smsConsent.granted, true);
+  assert.equal(exact.body.order.customer.redactedPhone, "+15*******67");
+  assert.equal(exact.body.order.totalPrice, "USD 47.98");
+
+  const partial = await findOrder("#1023", { env: shopifyEnv(), fetchImpl: mockFetch({ order: orderNode({ name: "#10230" }) }) });
+  assert.equal(partial.status, 404);
 });
 
-test("API searches products with staff password", async () => {
-  process.env.SHOPIFY_SHOP_DOMAIN = "welkom-usa.myshopify.com";
-  process.env.SHOPIFY_ADMIN_ACCESS_TOKEN = "shpat_test";
-  process.env.SHOPIFY_API_VERSION = "2026-07";
+test("product search filters inactive and unavailable variants", async () => {
+  const products = await searchProductsForSubstitutions("FLAKE32", { env: shopifyEnv(), fetchImpl: mockFetch(), excludeVariantId: "gid://shopify/ProductVariant/old" });
+  assert.equal(products.length, 1);
+  assert.equal(products[0].sku, "FLAKE32");
+  assert.equal(products[0].inventoryQuantity, 12);
+});
 
+test("API order search and selected-line-item substitutions require session", async () => {
+  const cookie = await loginCookie();
   const originalFetch = global.fetch;
-  global.fetch = async (url, options) => {
-    assert.match(url, /welkom-usa\.myshopify\.com/);
-    assert.equal(options.headers["X-Shopify-Access-Token"], "shpat_test");
-    return {
-      ok: true,
-      json: async () => ({
-        data: {
-          products: {
-            nodes: [
-              {
-                id: "product-1",
-                title: "Cadbury Flake Chocolate Bar 32g",
-                status: "ACTIVE",
-                featuredImage: { url: "https://example.com/flake.jpg" },
-                variants: {
-                  nodes: [{ id: "variant-1", title: "Default Title", price: { amount: "0.99" } }]
-                }
-              }
-            ]
-          }
-        }
-      })
-    };
-  };
-
+  global.fetch = mockFetch();
   try {
-    const response = await handler(event("/api/product-search", { password: "test123", query: "FLAKE32" }));
-    const body = JSON.parse(response.body);
-    assert.equal(response.statusCode, 200);
-    assert.equal(body.success, true);
-    assert.equal(body.products[0].title, "Cadbury Flake Chocolate Bar 32g");
-    assert.doesNotMatch(response.body, /shpat_test/);
+    const orderResponse = await handler(event("/api/order-search", { query: "1023" }, { cookie }));
+    assert.equal(orderResponse.statusCode, 200);
+    const lineResponse = await handler(event("/api/line-item-substitutions", {
+      orderId: "gid://shopify/Order/1",
+      lineItemId: "gid://shopify/LineItem/1"
+    }, { cookie }));
+    assert.equal(lineResponse.statusCode, 200);
+    assert.equal(JSON.parse(lineResponse.body).products.length, 1);
   } finally {
     global.fetch = originalFetch;
-    delete process.env.SHOPIFY_SHOP_DOMAIN;
-    delete process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
-    delete process.env.SHOPIFY_API_VERSION;
   }
 });
 
-test("normalizes order numbers", () => {
-  assert.equal(normalizeOrderQuery("#1023"), "1023");
-  assert.equal(normalizeOrderQuery("1023"), "1023");
+test("send revalidates order consent, line item, substitute inventory, duplicate and idempotency", async () => {
+  const cookie = await loginCookie();
+  const originalFetch = global.fetch;
+  global.fetch = mockFetch();
+  const payload = {
+    orderId: "gid://shopify/Order/1",
+    lineItemId: "gid://shopify/LineItem/1",
+    substituteVariantId: "gid://shopify/ProductVariant/new",
+    message: "Welkom USA: Hi Sarah, Cadbury Crunchie Chocolate Bar 44g in order #1023 is unavailable. We can substitute it with Cadbury Flake Chocolate Bar 32g. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.",
+    idempotencyKey: "idem-1"
+  };
+  try {
+    const first = await handler(event("/api/send-substitution-sms", payload, { cookie }));
+    assert.equal(first.statusCode, 200);
+    assert.equal(JSON.parse(first.body).dryRun, true);
+
+    const repeat = await handler(event("/api/send-substitution-sms", payload, { cookie }));
+    assert.equal(repeat.statusCode, 200);
+    assert.equal(JSON.parse(repeat.body).idempotent, true);
+
+    const duplicate = await handler(event("/api/send-substitution-sms", { ...payload, message: payload.message + " Thanks.", idempotencyKey: "idem-2" }, { cookie }));
+    assert.equal(duplicate.statusCode, 409);
+    assert.equal(JSON.parse(duplicate.body).code, "DUPLICATE_MESSAGE");
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
-test("Shopify lookup maps order and substitution suggestions", async () => {
-  const calls = [];
-  const result = await findOrder("#1023", {
-    env: {
-      SHOPIFY_SHOP_DOMAIN: "welkom-usa.myshopify.com",
-      SHOPIFY_ADMIN_ACCESS_TOKEN: "shpat_test",
-      SHOPIFY_API_VERSION: "2026-07"
-    },
-    fetchImpl: async (url, options) => {
-      calls.push({ url, options });
-      const body = JSON.parse(options.body);
-      if (body.query.includes("SearchOrder")) {
-        return {
-          ok: true,
-          json: async () => ({
-            data: {
-              orders: {
-                nodes: [
-                  {
-                    id: "gid://shopify/Order/1",
-                    name: "#1023",
-                    phone: "",
-                    processedAt: "2026-07-21T00:00:00Z",
-                    displayFulfillmentStatus: "PARTIALLY_FULFILLED",
-                    cancelledAt: null,
-                    customer: {
-                      firstName: "Sarah",
-                      lastName: "Johnson",
-                      email: "sarah@example.com",
-                      phone: "+15551234567"
-                    },
-                    shippingAddress: {
-                      name: "Sarah Johnson",
-                      city: "Orlando",
-                      province: "FL",
-                      country: "USA",
-                      zip: "32801",
-                      phone: ""
-                    },
-                    billingAddress: { phone: "" },
-                    lineItems: {
-                      nodes: [
-                        {
-                          id: "line-1",
-                          title: "Cadbury Crunchie Chocolate Bar 44g",
-                          variantTitle: "",
-                          quantity: 1,
-                          sku: "CRUNCHIE44",
-                          image: { url: "https://example.com/crunchie.jpg" },
-                          variant: { sku: "CRUNCHIE44", image: { url: "" } },
-                          originalUnitPriceSet: { shopMoney: { amount: "0.99", currencyCode: "USD" } }
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            }
-          })
-        };
-      }
+test("send blocks missing consent, cancelled order, invalid line item, and unavailable substitute", async () => {
+  const cookie = await loginCookie();
+  const originalFetch = global.fetch;
+  const payload = {
+    orderId: "gid://shopify/Order/1",
+    lineItemId: "gid://shopify/LineItem/1",
+    substituteVariantId: "gid://shopify/ProductVariant/new",
+    message: "Welkom USA: Hi Sarah, Cadbury Crunchie Chocolate Bar 44g in order #1023 is unavailable. We can substitute it with Cadbury Flake Chocolate Bar 32g. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out."
+  };
 
-      return {
-        ok: true,
-        json: async () => ({
-          data: {
-            products: {
-              nodes: [
-                {
-                  id: "product-1",
-                  title: "Cadbury Flake Chocolate Bar 32g",
-                  status: "ACTIVE",
-                  featuredImage: { url: "https://example.com/flake.jpg" },
-                  variants: {
-                    nodes: [{ id: "variant-1", title: "Default Title", price: { amount: "0.99" } }]
-                  }
-                }
-              ]
-            }
-          }
-        })
-      };
-    }
-  });
+  global.fetch = mockFetch({ order: orderNode({ customAttributes: [{ key: "SMS consent", value: "No" }] }) });
+  const noConsent = await handler(event("/api/send-substitution-sms", payload, { cookie }));
+  assert.equal(JSON.parse(noConsent.body).code, "SMS_CONSENT_MISSING");
 
-  assert.equal(result.status, 200);
-  assert.equal(result.body.order.name, "#1023");
-  assert.equal(result.body.order.customer.redactedPhone, "+15*******67");
-  assert.equal(result.body.order.lineItems[0].title, "Cadbury Crunchie Chocolate Bar 44g");
-  assert.equal(result.body.order.substitutionProducts[0].title, "Cadbury Flake Chocolate Bar 32g");
-  assert.equal(calls.length, 2);
-  assert.doesNotMatch(JSON.stringify(result.body), /shpat_test/);
+  global.fetch = mockFetch({ order: orderNode({ cancelledAt: "2026-07-20T00:00:00Z" }) });
+  const cancelled = await handler(event("/api/send-substitution-sms", payload, { cookie }));
+  assert.equal(JSON.parse(cancelled.body).code, "ORDER_CANCELLED");
+
+  global.fetch = mockFetch();
+  const badLine = await handler(event("/api/send-substitution-sms", { ...payload, lineItemId: "bad" }, { cookie }));
+  assert.equal(JSON.parse(badLine.body).code, "LINE_ITEM_INVALID");
+
+  global.fetch = mockFetch({ variant: variantNode({ availableForSale: false }) });
+  const unavailable = await handler(event("/api/send-substitution-sms", payload, { cookie }));
+  assert.equal(JSON.parse(unavailable.body).code, "SUBSTITUTE_UNAVAILABLE");
+  global.fetch = originalFetch;
+});
+
+test("history endpoint lists stored message records without secrets", async () => {
+  const cookie = await loginCookie();
+  const originalFetch = global.fetch;
+  global.fetch = mockFetch();
+  try {
+    await handler(event("/api/send-substitution-sms", {
+      orderId: "gid://shopify/Order/1",
+      lineItemId: "gid://shopify/LineItem/1",
+      substituteVariantId: "gid://shopify/ProductVariant/new",
+      message: "Welkom USA: Hi Sarah, Cadbury Crunchie Chocolate Bar 44g in order #1023 is unavailable. We can substitute it with Cadbury Flake Chocolate Bar 32g. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.",
+      idempotencyKey: "history"
+    }, { cookie }));
+    const history = await handler(event("/api/message-history", undefined, { cookie }, "GET"));
+    assert.equal(history.statusCode, 200);
+    assert.doesNotMatch(history.body, /shpat_test|15551234567/);
+    assert.equal(JSON.parse(history.body).records.length, 1);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("Twilio status callback validates signatures", async () => {
+  process.env.TWILIO_AUTH_TOKEN = "secret";
+  const cookie = await loginCookie();
+  const originalFetch = global.fetch;
+  global.fetch = mockFetch();
+  const send = await handler(event("/api/send-substitution-sms", {
+    orderId: "gid://shopify/Order/1",
+    lineItemId: "gid://shopify/LineItem/1",
+    substituteVariantId: "gid://shopify/ProductVariant/new",
+    message: "Welkom USA: Hi Sarah, Cadbury Crunchie Chocolate Bar 44g in order #1023 is unavailable. We can substitute it with Cadbury Flake Chocolate Bar 32g. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.",
+    idempotencyKey: "callback"
+  }, { cookie }));
+  global.fetch = originalFetch;
+  const recordId = JSON.parse(send.body).record.id;
+  const url = `https://example.netlify.app/api/twilio-status?recordId=${encodeURIComponent(recordId)}`;
+  const params = { MessageSid: "SM123", MessageStatus: "delivered" };
+  const signature = twilio.getExpectedTwilioSignature(process.env.TWILIO_AUTH_TOKEN, url, params);
+  const bad = await handler(formEvent(`/api/twilio-status?recordId=${recordId}`, params, "bad"));
+  assert.equal(bad.statusCode, 403);
+  const good = await handler(formEvent(`/api/twilio-status?recordId=${recordId}`, params, signature));
+  assert.equal(good.statusCode, 200);
 });
