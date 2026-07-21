@@ -1671,11 +1671,18 @@
 
     function updateConsentBadge() {
       const granted = Boolean(state.order?.smsConsent?.granted);
+      const email = state.order?.customer?.email || "";
       els.consentBadge.className = granted ? "badge" : "badge error";
       els.consentBadge.textContent = granted ? "SMS Opt-In" : "No SMS Consent";
-      els.consentNotice.textContent = granted
-        ? `Shopify order attribute recorded SMS consent = ${state.order.smsConsent.value}.`
-        : "Missing consent is treated as no consent, including accelerated checkout orders without the cart attribute.";
+      if (granted) {
+        els.consentNotice.textContent = `Shopify recorded SMS consent: ${state.order.smsConsent.value}.`;
+      } else if (email) {
+        els.consentNotice.textContent = `No SMS consent is recorded for this order. Do not send SMS. Email the customer instead at ${email}.`;
+      } else if (state.order) {
+        els.consentNotice.textContent = "No SMS consent is recorded and no customer email was returned. Do not send SMS; contact the customer through the normal order support process.";
+      } else {
+        els.consentNotice.textContent = "SMS consent must come from Shopify. A phone number alone is not treated as SMS consent.";
+      }
       updateSendState();
     }
 
@@ -1751,7 +1758,8 @@
       updateConsentBadge();
       updateMessageState();
       if (order.cancelled) toast("error", "This order is cancelled, so messaging is disabled.");
-      if (!order.smsConsent?.granted) toast("error", "This order has no recorded SMS consent.");
+      if (!order.smsConsent?.granted && order.customer?.email) toast("error", "No SMS consent recorded. Please email this customer instead.");
+      if (!order.smsConsent?.granted && !order.customer?.email) toast("error", "No SMS consent recorded.");
     }
 
     function renderLineItems(items) {

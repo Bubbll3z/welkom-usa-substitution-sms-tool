@@ -96,12 +96,21 @@ function money(value) {
   return currency ? `${currency} ${numeric.toFixed(2)}` : `$${numeric.toFixed(2)}`;
 }
 
-function consentFromAttributes(customAttributes = []) {
+function consentFromAttributes(customAttributes = [], smsMarketingConsent = null) {
   const found = customAttributes.find((attr) => String(attr.key || "").toLowerCase() === "sms consent");
   const value = found?.value || "";
+  const nativeState = String(smsMarketingConsent?.marketingState || "").toUpperCase();
+  if (nativeState === "SUBSCRIBED") {
+    return {
+      granted: true,
+      value: "Shopify SMS marketing consent: SUBSCRIBED",
+      source: "shopify_sms_marketing"
+    };
+  }
   return {
     granted: String(value).toLowerCase() === "yes",
-    value
+    value,
+    source: found ? "order_attribute" : "missing"
   };
 }
 
@@ -135,7 +144,7 @@ function usableSubstitute(variant, excludedVariantId) {
 
 function simplifyOrder(order, substitutionProducts = []) {
   const phone = pickPhone(order);
-  const smsConsent = consentFromAttributes(order.customAttributes || []);
+  const smsConsent = consentFromAttributes(order.customAttributes || [], order.customer?.smsMarketingConsent);
   return {
     id: order.id,
     name: order.name,
@@ -218,6 +227,12 @@ const ORDER_FIELDS = `
     lastName
     email
     phone
+    smsMarketingConsent {
+      marketingState
+      marketingOptInLevel
+      consentUpdatedAt
+      consentCollectedFrom
+    }
   }
   shippingAddress {
     name

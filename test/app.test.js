@@ -251,8 +251,10 @@ test("dry-run SMS does not call Twilio and validates phone", async () => {
 });
 
 test("Shopify consent mapping and exact order search", async () => {
-  assert.deepEqual(consentFromAttributes([{ key: "sms CONSENT", value: "yes" }]), { granted: true, value: "yes" });
-  assert.deepEqual(consentFromAttributes([{ key: "SMS consent", value: "No" }]), { granted: false, value: "No" });
+  assert.equal(consentFromAttributes([{ key: "sms CONSENT", value: "yes" }]).granted, true);
+  assert.equal(consentFromAttributes([{ key: "SMS consent", value: "No" }]).granted, false);
+  assert.equal(consentFromAttributes([], { marketingState: "SUBSCRIBED" }).granted, true);
+  assert.equal(consentFromAttributes([], { marketingState: "NOT_SUBSCRIBED" }).granted, false);
   assert.equal(normalizeOrderQuery("#1023"), "1023");
 
   const exact = await findOrder("#1023", { env: shopifyEnv(), fetchImpl: mockFetch() });

@@ -127,13 +127,10 @@ Required scopes:
 read_orders
 read_products
 read_inventory
-```
-
-Possible additional scope if Shopify protected customer data prevents phone/customer fields:
-
-```text
 read_customers
 ```
+
+`read_customers` is required so the app can read Shopify's native customer SMS marketing consent state when it is available. A customer phone number by itself is not treated as SMS consent.
 
 The checkout/cart must save this order custom attribute:
 
