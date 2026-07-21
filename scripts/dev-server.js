@@ -41,11 +41,9 @@ const server = http.createServer(async (req, res) => {
   }
 
   const urlPath = req.url === "/" ? "/index.html" : req.url.split("?")[0];
-  const filePath = path.normalize(path.join(publicDir, urlPath));
+  let filePath = path.normalize(path.join(publicDir, urlPath));
   if (!filePath.startsWith(publicDir) || !fs.existsSync(filePath)) {
-    res.writeHead(404);
-    res.end("Not found");
-    return;
+    filePath = path.join(publicDir, "index.html");
   }
 
   res.writeHead(200, { "Content-Type": contentType(filePath) });

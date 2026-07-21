@@ -774,6 +774,94 @@
       color: var(--text);
     }
 
+    .page-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .page-stack {
+      display: grid;
+      gap: 14px;
+    }
+
+    .wide {
+      grid-column: 1 / -1;
+    }
+
+    .metric {
+      display: grid;
+      gap: 5px;
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    .metric strong {
+      font-size: 24px;
+      line-height: 1;
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: minmax(180px, 1fr) 150px 130px auto auto;
+      gap: 10px;
+      align-items: end;
+      margin-bottom: 12px;
+    }
+
+    .table-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .message-row,
+    .template-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fbfdfc;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .message-row p,
+    .template-row p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
+
+    .settings-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .settings-row {
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fbfdfc;
+      font-size: 12px;
+    }
+
+    .settings-row span {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    #historyCard {
+      display: none;
+    }
+
     .footer {
       margin-top: 18px;
       text-align: center;
@@ -874,6 +962,8 @@
       .search-row,
       .search-inline,
       .message-actions,
+      .toolbar,
+      .settings-grid,
       .modal-actions {
         grid-template-columns: 1fr;
       }
@@ -914,16 +1004,16 @@
       </div>
 
       <nav class="nav">
-        <button class="nav-item active" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg>Search Order</button>
-        <button class="nav-item" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 13h6v7H4zM14 4h6v16h-6zM4 4h6v5H4z"/></svg>Dashboard</button>
+        <button class="nav-item active" type="button" id="searchNav"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg>Search Order</button>
+        <button class="nav-item" type="button" id="dashboardNav"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 13h6v7H4zM14 4h6v16h-6zM4 4h6v5H4z"/></svg>Dashboard</button>
         <button class="nav-item" type="button" id="historyNav"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>Sent Messages</button>
-        <button class="nav-item" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h10a2 2 0 0 1 2 2v16l-7-4-7 4V5a2 2 0 0 1 2-2z"/></svg>Templates</button>
-        <button class="nav-item" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21h-4v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1-2.8-2.8.1-.1A1.7 1.7 0 0 0 4.6 15 1.7 1.7 0 0 0 3.1 14H3v-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 2.8-2.8.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.5V3h4v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1 2.8 2.8-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1h.1v4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
-        <button class="nav-item" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>Backup</button>
+        <button class="nav-item" type="button" id="templatesNav"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h10a2 2 0 0 1 2 2v16l-7-4-7 4V5a2 2 0 0 1 2-2z"/></svg>Templates</button>
+        <button class="nav-item" type="button" id="settingsNav"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21h-4v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1-2.8-2.8.1-.1A1.7 1.7 0 0 0 4.6 15 1.7 1.7 0 0 0 3.1 14H3v-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 2.8-2.8.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.5V3h4v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1 2.8 2.8-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1h.1v4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
+        <button class="nav-item" type="button" id="backupNav"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>Backup</button>
       </nav>
 
-      <button class="nav-item" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M21 3v18"/></svg>Logout</button>
-      <div class="sidebar-foot">© 2026 Welkom USA<br>SMS App</div>
+      <button class="nav-item" type="button" id="sidebarLogoutButton"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M21 3v18"/></svg>Logout</button>
+      <div class="sidebar-foot">Copyright 2026 Welkom USA<br>SMS App</div>
     </aside>
 
     <div class="drawer-backdrop" id="drawerBackdrop"></div>
@@ -934,17 +1024,17 @@
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         </button>
         <div>
-          <h1>Substitution SMS</h1>
-          <p class="supporting">Search an order to view customer details, order items and send a substitution message.</p>
+          <h1 id="pageTitle">Substitution SMS</h1>
+          <p id="pageDescription" class="supporting">Search an order to view customer details, order items and send a substitution message.</p>
         </div>
         <div class="account-bar">
           <button class="shortcut" id="historyShortcut" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>Sent Messages</button>
-          <span class="user-pill"><span class="avatar">WA</span><strong>Welkom USA</strong><span aria-hidden="true">⌄</span></span>
+          <span class="user-pill"><span class="avatar">WA</span><strong>Welkom USA</strong><span aria-hidden="true">v</span></span>
         </div>
       </header>
 
       <main class="content">
-        <div class="dashboard-grid">
+        <div id="searchPage" class="dashboard-grid page-view">
           <section class="column" aria-label="Order details">
             <article class="card">
               <div class="card-pad">
@@ -1031,7 +1121,7 @@
                   <h2><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>Substitution Message</h2>
                   <p id="messageHelp" class="supporting">Select an order, unavailable item and substitute item.</p>
                 </div>
-                <button id="templateButton" class="btn-outline" type="button">Use Template ▾</button>
+                <button id="templateButton" class="btn-outline" type="button">Use Template v</button>
               </div>
 
               <label for="message">Editable SMS message</label>
@@ -1077,6 +1167,133 @@
           </section>
         </div>
 
+        <section id="dashboardPage" class="page-view page-stack hidden" aria-label="Dashboard">
+          <article class="card">
+            <div class="card-pad">
+              <div class="card-title">
+                <h2>Dashboard</h2>
+                <button id="dashboardRefresh" class="btn-outline" type="button">Refresh</button>
+              </div>
+              <div id="dashboardStats" class="page-grid"></div>
+            </div>
+          </article>
+          <article class="card">
+            <div class="card-pad">
+              <h2>System Status</h2>
+              <div id="configStatus" class="settings-grid" style="margin-top:12px;"></div>
+            </div>
+          </article>
+          <article class="card">
+            <div class="card-pad">
+              <h2>Recent Activity</h2>
+              <div id="recentActivity" class="table-list" style="margin-top:12px;"></div>
+            </div>
+          </article>
+        </section>
+
+        <section id="sentPage" class="page-view page-stack hidden" aria-label="Sent messages">
+          <article class="card">
+            <div class="card-pad">
+              <div class="card-title">
+                <h2>Sent Messages</h2>
+                <span class="fine">Persistent audit history</span>
+              </div>
+              <div class="toolbar">
+                <div>
+                  <label for="historySearch">Search</label>
+                  <input id="historySearch" type="search" placeholder="Order, phone, staff, or message">
+                </div>
+                <div>
+                  <label for="historyStatus">Status</label>
+                  <select id="historyStatus">
+                    <option value="">All</option>
+                    <option value="sent">Sent</option>
+                    <option value="dry_run">Dry run</option>
+                    <option value="failed">Failed</option>
+                    <option value="queued">Queued</option>
+                    <option value="delivered">Delivered</option>
+                  </select>
+                </div>
+                <div>
+                  <label for="historyDryRun">Mode</label>
+                  <select id="historyDryRun">
+                    <option value="">All</option>
+                    <option value="true">Dry run</option>
+                    <option value="false">Live</option>
+                  </select>
+                </div>
+                <button id="historyRefreshButton" class="btn-outline" type="button">Refresh</button>
+                <button id="historyResetButton" class="btn-soft" type="button">Reset</button>
+              </div>
+              <div id="sentHistoryList" class="table-list"></div>
+              <div id="historyPager" class="fine" style="margin-top:12px;"></div>
+            </div>
+          </article>
+        </section>
+
+        <section id="templatesPage" class="page-view page-stack hidden" aria-label="Templates">
+          <article class="card">
+            <div class="card-pad">
+              <div class="card-title">
+                <h2>Templates</h2>
+                <span class="fine">Approved substitution wording</span>
+              </div>
+              <div class="dashboard-grid" style="grid-template-columns:minmax(260px,0.6fr) minmax(320px,1fr);">
+                <div id="templateList" class="table-list"></div>
+                <div>
+                  <div class="field">
+                    <label for="templateName">Template name</label>
+                    <input id="templateName" type="text" placeholder="Substitution approval">
+                  </div>
+                  <div class="field">
+                    <label for="templateBody">Template body</label>
+                    <textarea id="templateBody" maxlength="320"></textarea>
+                    <div id="templateCounter" class="fine" style="margin-top:6px;">0 / 320</div>
+                  </div>
+                  <div class="preview-panel" style="margin-bottom:14px;">
+                    <h3>Template Preview</h3>
+                    <div id="templatePreview" class="phone-bubble"></div>
+                  </div>
+                  <div class="message-actions">
+                    <button id="saveTemplateButton" class="btn-primary" type="button">Save Template</button>
+                    <button id="duplicateTemplateButton" class="btn-outline" type="button">Duplicate</button>
+                  </div>
+                  <button id="archiveTemplateButton" class="btn-danger" type="button" style="width:100%; margin-top:12px;">Archive Template</button>
+                </div>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <section id="settingsPage" class="page-view page-stack hidden" aria-label="Settings">
+          <article class="card">
+            <div class="card-pad">
+              <div class="card-title">
+                <h2>Settings</h2>
+                <button id="testConnectionsButton" class="btn-outline" type="button">Refresh Status</button>
+              </div>
+              <div id="settingsStatus" class="settings-grid"></div>
+              <p class="fine" style="margin-top:12px;">Secrets are configured in Netlify environment variables and local .env files only. They are never displayed here.</p>
+            </div>
+          </article>
+        </section>
+
+        <section id="backupPage" class="page-view page-stack hidden" aria-label="Backup">
+          <article class="card">
+            <div class="card-pad">
+              <div class="card-title">
+                <h2>Backup</h2>
+                <span class="fine">Download local audit exports</span>
+              </div>
+              <p id="backupInfo" class="notice">Exports include message audit records and template metadata. They do not include Twilio, Shopify, or session secrets.</p>
+              <div class="message-actions">
+                <button id="exportJsonButton" class="btn-outline" type="button">Export JSON</button>
+                <button id="exportCsvButton" class="btn-primary" type="button">Export CSV</button>
+              </div>
+            </div>
+          </article>
+        </section>
+
         <p class="footer">Messages are sent via Twilio. STOP to opt out. HELP for help.</p>
       </main>
     </div>
@@ -1100,6 +1317,14 @@
       sidebar: document.getElementById("sidebar"),
       drawerBackdrop: document.getElementById("drawerBackdrop"),
       menuButton: document.getElementById("menuButton"),
+      pageTitle: document.getElementById("pageTitle"),
+      pageDescription: document.getElementById("pageDescription"),
+      searchPage: document.getElementById("searchPage"),
+      dashboardPage: document.getElementById("dashboardPage"),
+      sentPage: document.getElementById("sentPage"),
+      templatesPage: document.getElementById("templatesPage"),
+      settingsPage: document.getElementById("settingsPage"),
+      backupPage: document.getElementById("backupPage"),
       password: document.getElementById("password"),
       loginButton: document.getElementById("loginButton"),
       logoutButton: document.getElementById("logoutButton"),
@@ -1133,7 +1358,37 @@
       historyList: document.getElementById("historyList"),
       clearHistoryButton: document.getElementById("clearHistoryButton"),
       historyShortcut: document.getElementById("historyShortcut"),
-      historyNav: document.getElementById("historyNav")
+      historyNav: document.getElementById("historyNav"),
+      searchNav: document.getElementById("searchNav"),
+      dashboardNav: document.getElementById("dashboardNav"),
+      templatesNav: document.getElementById("templatesNav"),
+      settingsNav: document.getElementById("settingsNav"),
+      backupNav: document.getElementById("backupNav"),
+      sidebarLogoutButton: document.getElementById("sidebarLogoutButton"),
+      dashboardRefresh: document.getElementById("dashboardRefresh"),
+      dashboardStats: document.getElementById("dashboardStats"),
+      configStatus: document.getElementById("configStatus"),
+      recentActivity: document.getElementById("recentActivity"),
+      historySearch: document.getElementById("historySearch"),
+      historyStatus: document.getElementById("historyStatus"),
+      historyDryRun: document.getElementById("historyDryRun"),
+      historyRefreshButton: document.getElementById("historyRefreshButton"),
+      historyResetButton: document.getElementById("historyResetButton"),
+      sentHistoryList: document.getElementById("sentHistoryList"),
+      historyPager: document.getElementById("historyPager"),
+      templateList: document.getElementById("templateList"),
+      templateName: document.getElementById("templateName"),
+      templateBody: document.getElementById("templateBody"),
+      templateCounter: document.getElementById("templateCounter"),
+      templatePreview: document.getElementById("templatePreview"),
+      saveTemplateButton: document.getElementById("saveTemplateButton"),
+      duplicateTemplateButton: document.getElementById("duplicateTemplateButton"),
+      archiveTemplateButton: document.getElementById("archiveTemplateButton"),
+      settingsStatus: document.getElementById("settingsStatus"),
+      testConnectionsButton: document.getElementById("testConnectionsButton"),
+      backupInfo: document.getElementById("backupInfo"),
+      exportJsonButton: document.getElementById("exportJsonButton"),
+      exportCsvButton: document.getElementById("exportCsvButton")
     };
 
     const TEMPLATE = "Welkom USA: Hi [FIRST NAME], [UNAVAILABLE ITEM] in order #[ORDER NUMBER] is unavailable. We can substitute it with [SUBSTITUTE ITEM]. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.";
@@ -1147,7 +1402,12 @@
       unavailableItem: null,
       substituteItem: null,
       authorizedResend: false,
-      lastFocus: null
+      lastFocus: null,
+      currentPage: "search",
+      historyPage: 1,
+      historyLimit: 25,
+      selectedTemplate: null,
+      templates: []
     };
 
     function el(tag, className, text) {
@@ -1179,6 +1439,99 @@
       const node = el("div", `toast ${type}`, message);
       els.toastStack.appendChild(node);
       setTimeout(() => node.remove(), 4500);
+    }
+
+    function statusBadge(value, goodLabel = "Configured", badLabel = "Missing") {
+      const ok = Boolean(value);
+      return el("span", ok ? "badge" : "badge error", ok ? goodLabel : badLabel);
+    }
+
+    function renderStatusGrid(container, rows) {
+      clear(container);
+      rows.forEach(([label, value, badge]) => {
+        const row = el("div", "settings-row");
+        row.append(el("span", "", label));
+        if (badge) {
+          row.append(badge);
+        } else {
+          row.append(document.createTextNode(value || "-"));
+        }
+        container.append(row);
+      });
+    }
+
+    const pages = {
+      search: {
+        node: els.searchPage,
+        nav: els.searchNav,
+        title: "Substitution SMS",
+        description: "Search an order to view customer details, order items and send a substitution message.",
+        path: "/"
+      },
+      dashboard: {
+        node: els.dashboardPage,
+        nav: els.dashboardNav,
+        title: "Dashboard",
+        description: "View sending status, configuration health and recent activity.",
+        path: "/dashboard"
+      },
+      sent: {
+        node: els.sentPage,
+        nav: els.historyNav,
+        title: "Sent Messages",
+        description: "Review dry-run and live SMS audit history.",
+        path: "/sent"
+      },
+      templates: {
+        node: els.templatesPage,
+        nav: els.templatesNav,
+        title: "Templates",
+        description: "Maintain the approved substitution SMS wording.",
+        path: "/templates"
+      },
+      settings: {
+        node: els.settingsPage,
+        nav: els.settingsNav,
+        title: "Settings",
+        description: "Check safe configuration status without exposing secrets.",
+        path: "/settings"
+      },
+      backup: {
+        node: els.backupPage,
+        nav: els.backupNav,
+        title: "Backup",
+        description: "Export local audit data for backup or review.",
+        path: "/backup"
+      }
+    };
+
+    function pageFromPath(pathname) {
+      return Object.entries(pages).find(([, page]) => page.path === pathname)?.[0] || "search";
+    }
+
+    async function navigate(pageName, push = true) {
+      const page = pages[pageName] || pages.search;
+      state.currentPage = pages[pageName] ? pageName : "search";
+      Object.values(pages).forEach((entry) => {
+        entry.node.classList.add("hidden");
+        entry.nav.classList.remove("active");
+        entry.nav.removeAttribute("aria-current");
+      });
+      page.node.classList.remove("hidden");
+      page.nav.classList.add("active");
+      page.nav.setAttribute("aria-current", "page");
+      els.pageTitle.textContent = page.title;
+      els.pageDescription.textContent = page.description;
+      toggleDrawer(false);
+      if (push && window.location.pathname !== page.path) {
+        window.history.pushState({ page: state.currentPage }, "", page.path);
+      }
+      document.querySelector(".content").scrollIntoView({ behavior: "smooth", block: "start" });
+
+      if (state.currentPage === "dashboard") await loadDashboard();
+      if (state.currentPage === "sent") await loadSentMessages();
+      if (state.currentPage === "templates") await loadTemplates();
+      if (state.currentPage === "settings") await loadSettings();
     }
 
     async function api(path, options = {}) {
@@ -1219,6 +1572,7 @@
         setAuth(true, result.staffName);
         toast("success", `Logged in as ${result.staffName}.`);
         await loadHistory();
+        await navigate(state.currentPage, false);
       } catch (error) {
         setAuth(false);
         renderHistory([]);
@@ -1239,6 +1593,7 @@
         setAuth(true, result.staffName);
         toast("success", "Logged in.");
         await loadHistory();
+        await navigate(state.currentPage, false);
       } catch (error) {
         toast("error", error.message);
       }
@@ -1636,6 +1991,242 @@
       }
     }
 
+    async function loadDashboard() {
+      if (!state.authenticated) {
+        renderDashboard(null);
+        return;
+      }
+      try {
+        const result = await api("/api/dashboard");
+        renderDashboard(result);
+      } catch (error) {
+        clear(els.dashboardStats);
+        els.dashboardStats.append(el("div", "notice error wide", error.message));
+      }
+    }
+
+    function renderDashboard(result) {
+      clear(els.dashboardStats);
+      clear(els.recentActivity);
+      if (!result) {
+        els.dashboardStats.append(el("div", "notice warn wide", "Log in to view the dashboard."));
+        renderStatusGrid(els.configStatus, [["Session", "Log in first", statusBadge(false, "Active", "Logged out")]]);
+        els.recentActivity.append(el("div", "empty", "Recent messages will appear after login."));
+        return;
+      }
+      const stats = result.stats || {};
+      [
+        ["Total", stats.total || 0],
+        ["Live Sent", stats.live || 0],
+        ["Dry Runs", stats.dryRun || 0],
+        ["Failures", stats.failed || 0],
+        ["This Week", stats.last7Days || 0],
+        ["Today", stats.today || 0]
+      ].forEach(([label, value]) => {
+        const card = el("div", "metric");
+        card.append(el("span", "fine", label));
+        card.append(el("strong", "", value));
+        els.dashboardStats.append(card);
+      });
+      renderSafeStatus(els.configStatus, result.status || {});
+      const records = result.recent || [];
+      if (!records.length) {
+        els.recentActivity.append(el("div", "empty", "No message activity yet."));
+      } else {
+        records.slice(0, 8).forEach((record) => els.recentActivity.append(messageRecordRow(record)));
+      }
+    }
+
+    function renderSafeStatus(container, status) {
+      renderStatusGrid(container, [
+        ["Shopify store", status.shopifyDomain || "-", statusBadge(status.shopifyConfigured)],
+        ["Shopify API version", status.shopifyApiVersion || "-"],
+        ["Twilio sender", status.twilioSender || "-", statusBadge(status.twilioConfigured)],
+        ["Dry run mode", status.dryRun ? "On" : "Off", statusBadge(!status.dryRun, "Live enabled", "Dry run")],
+        ["Production sending", status.productionSendingEnabled ? "Enabled" : "Blocked", statusBadge(status.productionSendingEnabled, "Enabled", "Blocked")],
+        ["Storage", `${status.storageProvider || "-"}${status.storagePersistent ? " persistent" : " memory"}`],
+        ["SMS consent required", status.consentEnforced ? "Yes" : "No", statusBadge(status.consentEnforced, "Required", "Disabled")],
+        ["Cloudflare required", status.cloudflareRequired ? "Yes" : "No"]
+      ]);
+    }
+
+    function messageRecordRow(item) {
+      const row = el("div", "message-row");
+      const main = el("div");
+      const status = item.latestTwilioStatus || item.initialTwilioStatus || (item.dryRun ? "dry_run" : "sent");
+      main.append(el("strong", "", `${item.orderName || item.orderId || "-"} - ${status}`));
+      main.append(el("p", "", `${new Date(item.createdAt).toLocaleString()} - ${item.customerPhoneRedacted || ""} - ${item.staffIdentity || ""}`));
+      if (item.message) main.append(el("p", "", item.message));
+      row.append(main);
+      row.append(el("span", item.dryRun ? "badge warn" : "badge", item.dryRun ? "Dry run" : "Live"));
+      return row;
+    }
+
+    async function loadSentMessages() {
+      if (!state.authenticated) {
+        clear(els.sentHistoryList);
+        els.sentHistoryList.append(el("div", "notice warn", "Log in to view sent messages."));
+        els.historyPager.textContent = "";
+        return;
+      }
+      const params = new URLSearchParams({
+        page: String(state.historyPage),
+        limit: String(state.historyLimit)
+      });
+      if (els.historySearch.value.trim()) params.set("search", els.historySearch.value.trim());
+      if (els.historyStatus.value) params.set("status", els.historyStatus.value);
+      if (els.historyDryRun.value) params.set("dryRun", els.historyDryRun.value);
+      try {
+        const result = await api(`/api/message-history?${params.toString()}`);
+        renderSentMessages(result);
+      } catch (error) {
+        clear(els.sentHistoryList);
+        els.sentHistoryList.append(el("div", "notice error", error.message));
+      }
+    }
+
+    function renderSentMessages(result) {
+      clear(els.sentHistoryList);
+      const records = result.records || [];
+      if (!records.length) {
+        els.sentHistoryList.append(el("div", "empty", "No messages matched this view."));
+      } else {
+        records.forEach((record) => els.sentHistoryList.append(messageRecordRow(record)));
+      }
+      els.historyPager.textContent = `Page ${result.page || 1} of ${result.totalPages || 1} - ${result.total || 0} record${result.total === 1 ? "" : "s"}`;
+    }
+
+    async function loadTemplates() {
+      if (!state.authenticated) {
+        clear(els.templateList);
+        els.templateList.append(el("div", "notice warn", "Log in to manage templates."));
+        return;
+      }
+      try {
+        const result = await api("/api/templates");
+        state.templates = result.templates || [];
+        renderTemplates();
+        if (!state.selectedTemplate && state.templates[0]) selectTemplate(state.templates[0]);
+      } catch (error) {
+        clear(els.templateList);
+        els.templateList.append(el("div", "notice error", error.message));
+      }
+    }
+
+    function renderTemplates() {
+      clear(els.templateList);
+      if (!state.templates.length) {
+        els.templateList.append(el("div", "empty", "No active templates. Save the approved wording to create one."));
+        return;
+      }
+      state.templates.forEach((template) => {
+        const row = el("button", "template-row");
+        row.type = "button";
+        const main = el("span");
+        main.append(el("strong", "", template.name));
+        main.append(el("p", "", template.body));
+        row.append(main);
+        row.append(el("span", "badge", "Active"));
+        row.addEventListener("click", () => selectTemplate(template));
+        els.templateList.append(row);
+      });
+    }
+
+    function selectTemplate(template) {
+      state.selectedTemplate = template;
+      els.templateName.value = template.name || "";
+      els.templateBody.value = template.body || TEMPLATE;
+      updateTemplatePreview();
+    }
+
+    function updateTemplatePreview() {
+      const text = els.templateBody.value || TEMPLATE;
+      const estimate = smsEstimate(text);
+      els.templateCounter.textContent = `${estimate.length} / 320 - ${estimate.segments} segment${estimate.segments === 1 ? "" : "s"} - ${estimate.encoding}`;
+      els.templatePreview.textContent = text;
+    }
+
+    async function saveTemplate() {
+      if (!state.authenticated) return toast("error", "Please log in first.");
+      try {
+        const result = await api("/api/templates", {
+          method: "POST",
+          body: JSON.stringify({
+            id: state.selectedTemplate?.id,
+            name: els.templateName.value,
+            body: els.templateBody.value
+          })
+        });
+        state.selectedTemplate = result.template;
+        toast("success", "Template saved.");
+        await loadTemplates();
+      } catch (error) {
+        toast("error", error.message);
+      }
+    }
+
+    function duplicateTemplate() {
+      const source = state.selectedTemplate || { name: "Substitution approval", body: TEMPLATE };
+      state.selectedTemplate = null;
+      els.templateName.value = `${source.name} copy`;
+      els.templateBody.value = source.body;
+      updateTemplatePreview();
+      toast("success", "Template copied into a new draft.");
+    }
+
+    async function archiveSelectedTemplate() {
+      if (!state.selectedTemplate?.id) return toast("error", "Select a saved template first.");
+      try {
+        await api(`/api/templates/${encodeURIComponent(state.selectedTemplate.id)}/archive`, { method: "POST" });
+        toast("success", "Template archived.");
+        state.selectedTemplate = null;
+        els.templateName.value = "";
+        els.templateBody.value = TEMPLATE;
+        updateTemplatePreview();
+        await loadTemplates();
+      } catch (error) {
+        toast("error", error.message);
+      }
+    }
+
+    async function loadSettings() {
+      if (!state.authenticated) {
+        renderStatusGrid(els.settingsStatus, [["Session", "Log in first", statusBadge(false, "Active", "Logged out")]]);
+        return;
+      }
+      try {
+        const result = await api("/api/dashboard");
+        renderSafeStatus(els.settingsStatus, result.status || {});
+      } catch (error) {
+        clear(els.settingsStatus);
+        els.settingsStatus.append(el("div", "notice error", error.message));
+      }
+    }
+
+    async function exportBackup(kind) {
+      if (!state.authenticated) return toast("error", "Please log in first.");
+      const path = kind === "csv" ? "/api/backup/messages.csv" : "/api/backup.json";
+      try {
+        const response = await fetch(path, { credentials: "same-origin" });
+        if (!response.ok) {
+          const result = await response.json().catch(() => ({}));
+          throw new Error(result.error || "Export failed.");
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = el("a");
+        link.href = url;
+        link.download = kind === "csv" ? "welkom-sms-messages.csv" : "welkom-sms-backup.json";
+        document.body.append(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        toast("success", "Backup export downloaded.");
+      } catch (error) {
+        toast("error", error.message);
+      }
+    }
+
     function renderHistory(records) {
       clear(els.historyList);
       if (!records.length) {
@@ -1651,7 +2242,7 @@
     }
 
     function scrollToHistory() {
-      document.getElementById("historyCard").scrollIntoView({ behavior: "smooth", block: "start" });
+      navigate("sent");
     }
 
     function toggleDrawer(open) {
@@ -1698,11 +2289,63 @@
         }
       }
     });
-    els.templateButton.addEventListener("click", fillTemplate);
+    els.templateButton.addEventListener("click", () => {
+      const missing = [];
+      if (!state.order) missing.push("load an order");
+      if (!state.unavailableItem) missing.push("select the unavailable item");
+      if (!state.substituteItem) missing.push("select a substitute item");
+      if (missing.length) {
+        toast("error", `To use the template, first ${missing.join(", ")}.`);
+        return;
+      }
+      fillTemplate();
+      toast("success", "Template applied.");
+    });
     els.clearHistoryButton.addEventListener("click", () => toast("success", "History is persistent. Use storage admin tools to remove records."));
+    els.searchNav.addEventListener("click", () => navigate("search"));
+    els.dashboardNav.addEventListener("click", () => navigate("dashboard"));
     els.historyShortcut.addEventListener("click", scrollToHistory);
-    els.historyNav.addEventListener("click", () => {
-      scrollToHistory();
+    els.historyNav.addEventListener("click", () => navigate("sent"));
+    els.templatesNav.addEventListener("click", () => navigate("templates"));
+    els.settingsNav.addEventListener("click", () => navigate("settings"));
+    els.backupNav.addEventListener("click", () => navigate("backup"));
+    els.dashboardRefresh.addEventListener("click", loadDashboard);
+    els.historyRefreshButton.addEventListener("click", loadSentMessages);
+    els.historyResetButton.addEventListener("click", () => {
+      els.historySearch.value = "";
+      els.historyStatus.value = "";
+      els.historyDryRun.value = "";
+      state.historyPage = 1;
+      loadSentMessages();
+    });
+    els.historySearch.addEventListener("input", () => {
+      state.historyPage = 1;
+      window.clearTimeout(state.historyTimer);
+      state.historyTimer = window.setTimeout(loadSentMessages, 250);
+    });
+    els.historyStatus.addEventListener("change", () => {
+      state.historyPage = 1;
+      loadSentMessages();
+    });
+    els.historyDryRun.addEventListener("change", () => {
+      state.historyPage = 1;
+      loadSentMessages();
+    });
+    els.templateBody.addEventListener("input", updateTemplatePreview);
+    els.templateName.addEventListener("input", () => {
+      if (!els.templateBody.value.trim()) {
+        els.templateBody.value = TEMPLATE;
+        updateTemplatePreview();
+      }
+    });
+    els.saveTemplateButton.addEventListener("click", saveTemplate);
+    els.duplicateTemplateButton.addEventListener("click", duplicateTemplate);
+    els.archiveTemplateButton.addEventListener("click", archiveSelectedTemplate);
+    els.testConnectionsButton.addEventListener("click", loadSettings);
+    els.exportJsonButton.addEventListener("click", () => exportBackup("json"));
+    els.exportCsvButton.addEventListener("click", () => exportBackup("csv"));
+    els.sidebarLogoutButton.addEventListener("click", () => {
+      logout();
       toggleDrawer(false);
     });
     els.menuButton.addEventListener("click", () => toggleDrawer(true));
@@ -1714,6 +2357,9 @@
     setEmptyOrder();
     setAuth(false);
     updateMessageState();
+    updateTemplatePreview();
+    window.addEventListener("popstate", () => navigate(pageFromPath(window.location.pathname), false));
+    navigate(pageFromPath(window.location.pathname), false);
     checkSession();
   </script>
 </body>
