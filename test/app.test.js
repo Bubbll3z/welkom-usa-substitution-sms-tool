@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const twilio = require("twilio");
 
+process.env.NODE_ENV = "test";
 process.env.STAFF_PASSWORD = "test123";
 process.env.STAFF_NAME = "Test Staff";
 process.env.SESSION_SECRET = "12345678901234567890123456789012";
@@ -184,6 +185,7 @@ test.beforeEach(() => {
   process.env.SHOPIFY_API_VERSION = "2025-10";
   delete process.env.SHOPIFY_CLIENT_ID;
   delete process.env.SHOPIFY_CLIENT_SECRET;
+  delete process.env.BLOB_INIT_ENABLED;
 });
 
 test("authentication supports login, session, logout, wrong password, and expired session", async () => {
@@ -250,8 +252,10 @@ test("dry-run SMS does not call Twilio and validates phone", async () => {
 });
 
 test("Shopify consent mapping and exact order search", async () => {
-  assert.deepEqual(consentFromAttributes([{ key: "sms CONSENT", value: "yes" }]), { granted: true, value: "yes" });
-  assert.deepEqual(consentFromAttributes([{ key: "SMS consent", value: "No" }]), { granted: false, value: "No" });
+  assert.equal(consentFromAttributes([{ key: "sms CONSENT", value: "yes" }]).granted, true);
+  assert.equal(consentFromAttributes([{ key: "SMS consent", value: "No" }]).granted, false);
+  assert.equal(consentFromAttributes([], { marketingState: "SUBSCRIBED" }).granted, true);
+  assert.equal(consentFromAttributes([], { marketingState: "NOT_SUBSCRIBED" }).granted, false);
   assert.equal(normalizeOrderQuery("#1023"), "1023");
 
   const exact = await findOrder("#1023", { env: shopifyEnv(), fetchImpl: mockFetch() });
@@ -348,6 +352,29 @@ test("send revalidates order consent, line item, substitute inventory, duplicate
     const duplicate = await handler(event("/api/send-substitution-sms", { ...payload, message: payload.message + " Thanks.", idempotencyKey: "idem-2" }, { cookie }));
     assert.equal(duplicate.statusCode, 409);
     assert.equal(JSON.parse(duplicate.body).code, "DUPLICATE_MESSAGE");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("send supports a validated custom substitute title when Shopify search has no match", async () => {
+  const cookie = await loginCookie();
+  const originalFetch = global.fetch;
+  global.fetch = mockFetch();
+  try {
+    const response = await handler(event("/api/send-substitution-sms", {
+      orderId: "gid://shopify/Order/1",
+      lineItemId: "gid://shopify/LineItem/1",
+      customSubstituteTitle: "Iwisa Maize Meal 2.5kg",
+      message: "Welkom USA: Hi Sarah, Cadbury Crunchie Chocolate Bar 44g in order #1023 is unavailable. We can substitute it with Iwisa Maize Meal 2.5kg. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.",
+      idempotencyKey: "custom-substitute"
+    }, { cookie }));
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.success, true);
+    assert.equal(body.record.customSubstitute, true);
+    assert.equal(body.record.substituteVariantId, "");
+    assert.equal(body.record.substituteTitle, "Iwisa Maize Meal 2.5kg");
   } finally {
     global.fetch = originalFetch;
   }
@@ -473,6 +500,26 @@ test("template endpoint validates approved wording and supports archive", async 
 
   const remaining = await handler(event("/api/templates", undefined, { cookie }, "GET"));
   assert.equal(JSON.parse(remaining.body).templates.some((item) => item.id === template.id), false);
+});
+
+test("blob initialization endpoint requires staff authentication and is idempotent", async () => {
+  const cookie = await loginCookie();
+  const disabled = await handler(event("/api/admin/init-blobs", {}, { cookie }, "POST"));
+  assert.equal(disabled.statusCode, 404);
+
+  process.env.BLOB_INIT_ENABLED = "true";
+  const blocked = await handler(event("/api/admin/init-blobs", {}, {}, "POST"));
+  assert.equal(blocked.statusCode, 401);
+
+  const first = await handler(event("/api/admin/init-blobs", {}, { cookie }, "POST"));
+  assert.equal(first.statusCode, 200);
+  const firstBody = JSON.parse(first.body);
+  assert.equal(firstBody.success, true);
+  assert.equal(firstBody.stores.history, "welkom-sms-history");
+
+  const second = await handler(event("/api/admin/init-blobs", {}, { cookie }, "POST"));
+  assert.equal(second.statusCode, 200);
+  assert.equal(JSON.parse(second.body).success, true);
 });
 
 test("Twilio status callback validates signatures", async () => {

@@ -25,6 +25,7 @@ const {
   findByIdempotency,
   findDuplicate,
   getMessageRecord,
+  initializeDataStores,
   listTemplates,
   listMessageRecords,
   messageStats,
@@ -72,6 +73,7 @@ function clientKey(event, route) {
 }
 
 function rateLimit(event, route, max = 60, windowMs = 60 * 1000) {
+  if (process.env.NODE_ENV === "test") return null;
   const key = clientKey(event, route);
   const now = Date.now();
   const entry = apiBuckets.get(key) || { count: 0, resetAt: now + windowMs };
@@ -202,7 +204,8 @@ async function handleDuplicateCheck(event) {
   const duplicate = await findDuplicate({
     orderId: body.orderId,
     lineItemId: body.lineItemId,
-    substituteVariantId: body.substituteVariantId
+    substituteVariantId: body.substituteVariantId,
+    customSubstituteTitle: body.customSubstituteTitle
   });
   return json(200, { success: true, duplicate: Boolean(duplicate), record: publicRecord(duplicate) });
 }
@@ -224,6 +227,14 @@ function validateOrderForSending(order, body) {
   return { lineItem };
 }
 
+function validateCustomSubstituteTitle(value) {
+  const title = String(value || "").trim().replace(/\s+/g, " ");
+  if (!title) return { ok: false, code: "INVALID_REQUEST", error: "Substitute item is required." };
+  if (title.length < 2 || title.length > 120) return { ok: false, code: "INVALID_REQUEST", error: "Custom substitute title must be between 2 and 120 characters." };
+  if (/<\/?[a-z][\s\S]*>/i.test(title)) return { ok: false, code: "INVALID_REQUEST", error: "Custom substitute title cannot contain HTML." };
+  return { ok: true, title };
+}
+
 async function handleSendSubstitutionSms(event) {
   const limited = rateLimit(event, "send-substitution-sms", 10);
   if (limited) return limited;
@@ -234,7 +245,9 @@ async function handleSendSubstitutionSms(event) {
   const body = parseBody(event);
   if (!body) return error(400, "INVALID_REQUEST", "Request body must be valid JSON.");
 
-  if (!body.orderId || !body.lineItemId || !body.substituteVariantId) {
+  const hasShopifySubstitute = Boolean(body.substituteVariantId);
+  const customValidation = hasShopifySubstitute ? null : validateCustomSubstituteTitle(body.customSubstituteTitle);
+  if (!body.orderId || !body.lineItemId || (!hasShopifySubstitute && !customValidation?.ok)) {
     return error(400, "INVALID_REQUEST", "Order, unavailable item, and substitute item are required.");
   }
 
@@ -244,14 +257,24 @@ async function handleSendSubstitutionSms(event) {
   const orderValidation = validateOrderForSending(order, body);
   if (orderValidation.error) return error(orderValidation.status, orderValidation.code, orderValidation.error);
 
-  const substituteResult = await getVariantById(body.substituteVariantId);
-  if (!substituteResult.body.success) return json(substituteResult.status, substituteResult.body);
-  const substitute = substituteResult.body.product;
-  if (substitute.productStatus !== "ACTIVE" || !substitute.availableForSale) {
-    return error(400, "SUBSTITUTE_UNAVAILABLE", "The selected substitute is not currently available for sale.");
-  }
-  if (Number.isFinite(substitute.inventoryQuantity) && substitute.inventoryQuantity <= 0) {
-    return error(400, "SUBSTITUTE_UNAVAILABLE", "The selected substitute has no available inventory.");
+  let substitute;
+  if (hasShopifySubstitute) {
+    const substituteResult = await getVariantById(body.substituteVariantId);
+    if (!substituteResult.body.success) return json(substituteResult.status, substituteResult.body);
+    substitute = substituteResult.body.product;
+    if (substitute.productStatus !== "ACTIVE" || !substitute.availableForSale) {
+      return error(400, "SUBSTITUTE_UNAVAILABLE", "The selected substitute is not currently available for sale.");
+    }
+    if (Number.isFinite(substitute.inventoryQuantity) && substitute.inventoryQuantity <= 0) {
+      return error(400, "SUBSTITUTE_UNAVAILABLE", "The selected substitute has no available inventory.");
+    }
+  } else {
+    if (!customValidation.ok) return error(400, customValidation.code, customValidation.error);
+    substitute = {
+      id: `custom:${customValidation.title.toLowerCase()}`,
+      title: customValidation.title,
+      customSubstitute: true
+    };
   }
 
   const fallbackMessage = buildSubstitutionMessage({
@@ -273,7 +296,8 @@ async function handleSendSubstitutionSms(event) {
   const duplicate = await findDuplicate({
     orderId: order.id,
     lineItemId: orderValidation.lineItem.id,
-    substituteVariantId: substitute.id
+    substituteVariantId: hasShopifySubstitute ? substitute.id : "",
+    customSubstituteTitle: hasShopifySubstitute ? "" : substitute.title
   });
   if (duplicate && !body.authorizedResend) {
     return json(409, {
@@ -291,8 +315,10 @@ async function handleSendSubstitutionSms(event) {
     customerFirstName: order.customer.firstName,
     unavailableLineItemId: orderValidation.lineItem.id,
     unavailableTitle: orderValidation.lineItem.title,
-    substituteVariantId: substitute.id,
+    substituteVariantId: hasShopifySubstitute ? substitute.id : "",
     substituteTitle: substitute.title,
+    customSubstitute: !hasShopifySubstitute,
+    customSubstituteTitle: hasShopifySubstitute ? "" : substitute.title,
     message: messageValidation.message,
     staffIdentity: auth.session.staffName,
     initialTwilioStatus: "created",
@@ -300,6 +326,7 @@ async function handleSendSubstitutionSms(event) {
     dryRun: undefined,
     idempotencyKey
   });
+  if (!created.ok) return error(500, created.code || "STORAGE_ERROR", created.error || "Message history could not be saved.");
 
   if (created.idempotent) {
     return json(200, { success: true, idempotent: true, message: "This request was already processed.", record: publicRecord(created.record) });
@@ -312,12 +339,14 @@ async function handleSendSubstitutionSms(event) {
     recordId: created.record.id
   });
 
-  created.record.dryRun = smsResult.body.dryRun;
-  created.record.twilioMessageSid = smsResult.body.sid || "";
-  created.record.initialTwilioStatus = smsResult.body.providerStatus || "failed";
-  created.record.latestTwilioStatus = smsResult.body.providerStatus || "failed";
-  created.record.failureReason = smsResult.body.success ? "" : smsResult.body.error;
-  await saveRecord(created.record);
+  const updatedRecord = await saveRecord({
+    ...created.record,
+    dryRun: smsResult.body.dryRun,
+    twilioMessageSid: smsResult.body.sid || "",
+    initialTwilioStatus: smsResult.body.providerStatus || "failed",
+    latestTwilioStatus: smsResult.body.providerStatus || "failed",
+    failureReason: smsResult.body.success ? "" : smsResult.body.error
+  });
 
   if (smsResult.log) {
     console.error("Twilio send error:", smsResult.log);
@@ -329,7 +358,7 @@ async function handleSendSubstitutionSms(event) {
     staffIdentity: auth.session.staffName
   });
 
-  return json(smsResult.status, { ...smsResult.body, record: publicRecord(created.record) });
+  return json(smsResult.status, { ...smsResult.body, record: publicRecord(updatedRecord || created.record) });
 }
 
 async function handleHistory(event) {
@@ -339,7 +368,7 @@ async function handleHistory(event) {
   const result = await queryMessageRecords(process.env, {
     page: params.get("page"),
     limit: params.get("limit"),
-    query: params.get("query"),
+    query: params.get("query") || params.get("search"),
     status: params.get("status"),
     dryRun: params.get("dryRun")
   });
@@ -369,13 +398,23 @@ function safeConfigStatus() {
     twilioConfigured: Boolean(process.env.TWILIO_ACCOUNT_SID && (process.env.TWILIO_AUTH_TOKEN || (process.env.TWILIO_API_KEY_SID && process.env.TWILIO_API_KEY_SECRET)) && (process.env.TWILIO_MESSAGING_SERVICE_SID || process.env.TWILIO_FROM_NUMBER || process.env.TWILIO_PHONE_NUMBER)),
     twilioSender: sender,
     storageProvider: process.env.MESSAGE_STORAGE_PROVIDER || (process.env.NETLIFY === "true" ? "netlify-blobs" : "memory"),
-    storagePersistent: (process.env.MESSAGE_STORAGE_PROVIDER || "").toLowerCase() === "netlify-blobs",
+    storagePersistent: (process.env.MESSAGE_STORAGE_PROVIDER || (process.env.NETLIFY === "true" ? "netlify-blobs" : "memory")).toLowerCase() === "netlify-blobs",
     dryRun: String(process.env.SMS_DRY_RUN ?? process.env.DRY_RUN ?? "true").toLowerCase() !== "false",
     productionSendingEnabled: String(process.env.SMS_DRY_RUN ?? process.env.DRY_RUN ?? "true").toLowerCase() === "false",
     sessionDurationMinutes: Number(process.env.SESSION_DURATION_MINUTES || 480),
     consentEnforced: true,
     cloudflareRequired: false
   };
+}
+
+async function handleInitializeBlobs(event) {
+  if (String(process.env.BLOB_INIT_ENABLED || "").toLowerCase() !== "true") {
+    return error(404, "NOT_FOUND", "Not found.");
+  }
+  const auth = requireSession(event);
+  if (auth.error) return auth.error;
+  const result = await initializeDataStores();
+  return json(200, { success: true, ...result });
 }
 
 async function handleTemplates(event) {
@@ -464,6 +503,7 @@ exports.handler = async (event) => {
 
   if (route === "login") return handleLogin(event);
   if (route === "logout") return handleLogout(event);
+  if (route === "admin/init-blobs") return handleInitializeBlobs(event);
   if (route === "templates") return handleTemplates(event);
   if (/^templates\/.+\/archive$/.test(route)) return handleTemplateArchive(event, route);
   if (route === "order-search") return handleOrderSearch(event);

@@ -96,12 +96,21 @@ function money(value) {
   return currency ? `${currency} ${numeric.toFixed(2)}` : `$${numeric.toFixed(2)}`;
 }
 
-function consentFromAttributes(customAttributes = []) {
+function consentFromAttributes(customAttributes = [], smsMarketingConsent = null) {
   const found = customAttributes.find((attr) => String(attr.key || "").toLowerCase() === "sms consent");
   const value = found?.value || "";
+  const nativeState = String(smsMarketingConsent?.marketingState || "").toUpperCase();
+  if (nativeState === "SUBSCRIBED") {
+    return {
+      granted: true,
+      value: "Shopify SMS marketing consent: SUBSCRIBED",
+      source: "shopify_sms_marketing"
+    };
+  }
   return {
     granted: String(value).toLowerCase() === "yes",
-    value
+    value,
+    source: found ? "order_attribute" : "missing"
   };
 }
 
@@ -135,7 +144,7 @@ function usableSubstitute(variant, excludedVariantId) {
 
 function simplifyOrder(order, substitutionProducts = []) {
   const phone = pickPhone(order);
-  const smsConsent = consentFromAttributes(order.customAttributes || []);
+  const smsConsent = consentFromAttributes(order.customAttributes || [], order.customer?.smsMarketingConsent);
   return {
     id: order.id,
     name: order.name,
@@ -218,6 +227,12 @@ const ORDER_FIELDS = `
     lastName
     email
     phone
+    smsMarketingConsent {
+      marketingState
+      marketingOptInLevel
+      consentUpdatedAt
+      consentCollectedFrom
+    }
   }
   shippingAddress {
     name
@@ -288,12 +303,25 @@ async function searchProductsForSubstitutions(searchText, options = {}) {
 
   const safe = escapeSearchTerm(clean).split(/\s+/).slice(0, 8).join(" ");
   const compact = clean.replace(/[^\w-]/g, "");
-  const searchQuery = compact && compact.length === clean.length
-    ? `(sku:${compact} OR barcode:${compact} OR title:"${safe}")`
-    : `title:"${safe}"`;
-  const result = await shopifyGraphql(query, { query: searchQuery }, options);
-  if (!result.ok) return [];
-  return (result.json.data?.productVariants?.nodes || [])
+  const queryAttempts = [
+    safe,
+    compact ? `sku:${compact}*` : "",
+    compact ? `barcode:${compact}*` : "",
+    `title:"${safe}"`
+  ].filter(Boolean);
+  const variants = [];
+  const seen = new Set();
+  for (const searchQuery of queryAttempts) {
+    const result = await shopifyGraphql(query, { query: searchQuery }, options);
+    if (!result.ok) continue;
+    for (const variant of result.json.data?.productVariants?.nodes || []) {
+      if (!variant?.id || seen.has(variant.id)) continue;
+      seen.add(variant.id);
+      variants.push(variant);
+    }
+    if (variants.length >= (options.limit || 12)) break;
+  }
+  return variants
     .filter((variant) => usableSubstitute(variant, options.excludeVariantId))
     .map(simplifyVariant)
     .slice(0, options.limit || 12);
