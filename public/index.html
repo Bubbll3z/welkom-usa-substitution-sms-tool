@@ -1083,7 +1083,10 @@
 
             <article class="card">
               <div class="card-pad">
-                <h2 class="warning-title">Unavailable Item</h2>
+                <div class="card-title">
+                  <h2>Item to Replace</h2>
+                  <span class="fine">Staff selected</span>
+                </div>
                 <div id="lineItems" class="item-list"></div>
               </div>
             </article>
@@ -1119,7 +1122,7 @@
               <div class="message-header">
                 <div>
                   <h2><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>Substitution Message</h2>
-                  <p id="messageHelp" class="supporting">Select an order, unavailable item and substitute item.</p>
+                  <p id="messageHelp" class="supporting">Select an order item to replace and a substitute item.</p>
                 </div>
                 <button id="templateButton" class="btn-outline" type="button">Use Template v</button>
               </div>
@@ -1273,7 +1276,12 @@
                 <button id="testConnectionsButton" class="btn-outline" type="button">Refresh Status</button>
               </div>
               <div id="settingsStatus" class="settings-grid"></div>
-              <p class="fine" style="margin-top:12px;">Secrets are configured in Netlify environment variables and local .env files only. They are never displayed here.</p>
+              <div class="message-actions" style="margin-top:14px;">
+                <button id="initializeBlobsButton" class="btn-primary" type="button">Initialize Blob Stores</button>
+                <button id="restoreTemplateButton" class="btn-outline" type="button">Restore Default Template</button>
+              </div>
+              <div id="settingsActionsStatus" class="notice hidden" style="margin-top:12px;"></div>
+              <p class="fine" style="margin-top:12px;">Secrets are configured in Netlify environment variables and local .env files only. Settings actions never display or change secret values.</p>
             </div>
           </article>
         </section>
@@ -1386,6 +1394,9 @@
       archiveTemplateButton: document.getElementById("archiveTemplateButton"),
       settingsStatus: document.getElementById("settingsStatus"),
       testConnectionsButton: document.getElementById("testConnectionsButton"),
+      initializeBlobsButton: document.getElementById("initializeBlobsButton"),
+      restoreTemplateButton: document.getElementById("restoreTemplateButton"),
+      settingsActionsStatus: document.getElementById("settingsActionsStatus"),
       backupInfo: document.getElementById("backupInfo"),
       exportJsonButton: document.getElementById("exportJsonButton"),
       exportCsvButton: document.getElementById("exportCsvButton")
@@ -1560,6 +1571,7 @@
       els.password.disabled = authenticated;
       els.loginButton.disabled = authenticated;
       els.logoutButton.disabled = !authenticated;
+      els.sidebarLogoutButton.disabled = !authenticated;
       els.searchButton.disabled = !authenticated;
       els.subSearchButton.disabled = !authenticated;
       els.subSearchState.textContent = authenticated ? "Shopify suggestions" : "Log in first";
@@ -1693,7 +1705,7 @@
       if (state.order?.cancelled) missing.push("order is not cancelled");
       if (!state.order?.customer?.redactedPhone) missing.push("a customer phone number exists");
       if (!state.order?.smsConsent?.granted) missing.push("SMS consent is recorded on Shopify");
-      if (!state.unavailableItem) missing.push("an unavailable item is selected");
+      if (!state.unavailableItem) missing.push("an order item to replace is selected");
       if (!state.substituteItem) missing.push("a substitute item is selected");
       if (state.substituteItem && state.substituteItem.availableForSale === false) missing.push("substitute is available");
       if (Number.isFinite(state.substituteItem?.inventoryQuantity) && state.substituteItem.inventoryQuantity <= 0) missing.push("substitute has inventory");
@@ -1716,7 +1728,7 @@
       els.copyButton.disabled = !els.message.value.trim();
       els.sendReadiness.className = missing.length ? "notice warn" : "notice";
       els.sendReadiness.textContent = missing.length ? `Before sending, confirm: ${missing.join(", ")}.` : "Ready to send after final confirmation.";
-      els.messageHelp.textContent = state.order?.customer?.redactedPhone ? `This message will be sent to ${state.order.customer.redactedPhone}` : "Select an order, unavailable item and substitute item.";
+      els.messageHelp.textContent = state.order?.customer?.redactedPhone ? `This message will be sent to ${state.order.customer.redactedPhone}` : "Select an order item to replace and a substitute item.";
     }
 
     function setEmptyOrder() {
@@ -1725,7 +1737,7 @@
       clear(els.lineItems);
       els.lineItems.append(el("div", "empty", "Search an order first."));
       clear(els.substitutions);
-      els.substitutions.append(el("div", "empty", "Select an unavailable item to review substitution options."));
+      els.substitutions.append(el("div", "empty", "Select an order item to review substitution options."));
       updateConsentBadge();
     }
 
@@ -1754,7 +1766,7 @@
       ]);
       renderLineItems(order.lineItems || []);
       clear(els.substitutions);
-      els.substitutions.append(el("div", "empty", "Select an unavailable item to load Shopify substitution suggestions."));
+      els.substitutions.append(el("div", "empty", "Select an order item to load Shopify substitution suggestions."));
       updateConsentBadge();
       updateMessageState();
       if (order.cancelled) toast("error", "This order is cancelled, so messaging is disabled.");
@@ -1882,7 +1894,7 @@
       try {
         const result = await api("/api/product-search", {
           method: "POST",
-          body: JSON.stringify({ query })
+          body: JSON.stringify({ query, excludeVariantId: state.unavailableItem?.variantId || "" })
         });
         renderSubstitutions(result.products || []);
         els.subSearchState.textContent = `${(result.products || []).length} result${(result.products || []).length === 1 ? "" : "s"}`;
@@ -1897,7 +1909,7 @@
 
     function addCustomSubstitute() {
       if (!state.order || !state.unavailableItem) {
-        toast("error", "Load an order and select the unavailable item first.");
+        toast("error", "Load an order and select the item to replace first.");
         return;
       }
       const typed = window.prompt("Type the substitute item name exactly as staff want it shown in the SMS:", els.subSearch.value.trim());
@@ -2073,13 +2085,16 @@
         return;
       }
       const stats = result.stats || {};
+      if (result.warning) {
+        els.dashboardStats.append(el("div", "notice warn wide", result.warning));
+      }
       [
         ["Total", stats.total || 0],
-        ["Live Sent", stats.live || 0],
+        ["Live Sent", stats.production || 0],
         ["Dry Runs", stats.dryRun || 0],
         ["Failures", stats.failed || 0],
-        ["This Week", stats.last7Days || 0],
-        ["Today", stats.today || 0]
+        ["This Week", stats.sentLast7Days || 0],
+        ["Today", stats.sentToday || 0]
       ].forEach(([label, value]) => {
         const card = el("div", "metric");
         card.append(el("span", "fine", label));
@@ -2103,6 +2118,8 @@
         ["Dry run mode", status.dryRun ? "On" : "Off", statusBadge(!status.dryRun, "Live enabled", "Dry run")],
         ["Production sending", status.productionSendingEnabled ? "Enabled" : "Blocked", statusBadge(status.productionSendingEnabled, "Enabled", "Blocked")],
         ["Storage", `${status.storageProvider || "-"}${status.storagePersistent ? " persistent" : " memory"}`],
+        ["Storage health", status.storageHealthy === false ? "Needs first write" : "Available", statusBadge(status.storageHealthy !== false, "Available", "Needs init")],
+        ["Blob init action", status.blobInitEnabled ? "Enabled" : "Disabled", statusBadge(status.blobInitEnabled, "Enabled", "Disabled")],
         ["SMS consent required", status.consentEnforced ? "Yes" : "No", statusBadge(status.consentEnforced, "Required", "Disabled")],
         ["Cloudflare required", status.cloudflareRequired ? "Yes" : "No"]
       ]);
@@ -2145,9 +2162,12 @@
 
     function renderSentMessages(result) {
       clear(els.sentHistoryList);
+      if (result.warning) {
+        els.sentHistoryList.append(el("div", "notice warn", result.warning));
+      }
       const records = result.records || [];
       if (!records.length) {
-        els.sentHistoryList.append(el("div", "empty", "No messages matched this view."));
+        els.sentHistoryList.append(el("div", "empty", result.warning ? "No sent messages are available yet." : "No messages matched this view."));
       } else {
         records.forEach((record) => els.sentHistoryList.append(messageRecordRow(record)));
       }
@@ -2163,11 +2183,13 @@
       try {
         const result = await api("/api/templates");
         state.templates = result.templates || [];
+        if (result.warning) toast("error", result.warning);
         renderTemplates();
         if (!state.selectedTemplate && state.templates[0]) selectTemplate(state.templates[0]);
       } catch (error) {
         clear(els.templateList);
-        els.templateList.append(el("div", "notice error", error.message));
+        els.templateList.append(el("div", "notice error", `${error.message}${error.code ? ` (${error.code})` : ""}`));
+        els.templateList.append(el("div", "notice warn", "Open Settings and use Initialize Blob Stores. If that says initialization is disabled, temporarily set BLOB_INIT_ENABLED=true in Netlify and redeploy."));
       }
     }
 
@@ -2250,14 +2272,68 @@
     async function loadSettings() {
       if (!state.authenticated) {
         renderStatusGrid(els.settingsStatus, [["Session", "Log in first", statusBadge(false, "Active", "Logged out")]]);
+        els.initializeBlobsButton.disabled = true;
+        els.restoreTemplateButton.disabled = true;
         return;
       }
+      els.initializeBlobsButton.disabled = false;
+      els.restoreTemplateButton.disabled = false;
       try {
         const result = await api("/api/dashboard");
         renderSafeStatus(els.settingsStatus, result.status || {});
+        if (result.warning) setSettingsActionStatus("warn", result.warning);
       } catch (error) {
         clear(els.settingsStatus);
-        els.settingsStatus.append(el("div", "notice error", error.message));
+        els.settingsStatus.append(el("div", "notice error", `${error.message}${error.code ? ` (${error.code})` : ""}`));
+        setSettingsActionStatus("error", "Status could not be loaded. Check that you are logged in, then try Initialize Blob Stores if storage is the failing area.");
+      }
+    }
+
+    function setSettingsActionStatus(type, message) {
+      els.settingsActionsStatus.className = `notice ${type === "error" ? "error" : type === "warn" ? "warn" : ""}`.trim();
+      els.settingsActionsStatus.textContent = message;
+      els.settingsActionsStatus.classList.remove("hidden");
+    }
+
+    async function initializeBlobStores() {
+      if (!state.authenticated) return toast("error", "Please log in first.");
+      els.initializeBlobsButton.disabled = true;
+      setSettingsActionStatus("warn", "Initializing Blob stores...");
+      try {
+        const result = await api("/api/admin/init-blobs", { method: "POST" });
+        setSettingsActionStatus("success", `Blob stores checked: ${Object.values(result.stores || {}).join(", ")}.`);
+        await loadSettings();
+        await loadTemplates();
+      } catch (error) {
+        const guidance = error.code === "BLOB_INIT_DISABLED"
+          ? "Blob initialization is disabled. Temporarily set BLOB_INIT_ENABLED=true in Netlify environment variables, redeploy, then click this button again. Set it back to false afterwards."
+          : `${error.message}${error.code ? ` (${error.code})` : ""}`;
+        setSettingsActionStatus("error", guidance);
+      } finally {
+        els.initializeBlobsButton.disabled = false;
+      }
+    }
+
+    async function restoreDefaultTemplate() {
+      if (!state.authenticated) return toast("error", "Please log in first.");
+      els.restoreTemplateButton.disabled = true;
+      setSettingsActionStatus("warn", "Restoring the default substitution template...");
+      try {
+        await api("/api/templates", {
+          method: "POST",
+          body: JSON.stringify({
+            id: "default-substitution",
+            name: "Default substitution",
+            body: TEMPLATE,
+            isDefault: true
+          })
+        });
+        setSettingsActionStatus("success", "Default template is saved.");
+        await loadTemplates();
+      } catch (error) {
+        setSettingsActionStatus("error", `${error.message}${error.code ? ` (${error.code})` : ""}`);
+      } finally {
+        els.restoreTemplateButton.disabled = false;
       }
     }
 
@@ -2350,7 +2426,7 @@
     els.templateButton.addEventListener("click", () => {
       const missing = [];
       if (!state.order) missing.push("load an order");
-      if (!state.unavailableItem) missing.push("select the unavailable item");
+      if (!state.unavailableItem) missing.push("select the item to replace");
       if (!state.substituteItem) missing.push("select a substitute item");
       if (missing.length) {
         toast("error", `To use the template, first ${missing.join(", ")}.`);
@@ -2400,6 +2476,8 @@
     els.duplicateTemplateButton.addEventListener("click", duplicateTemplate);
     els.archiveTemplateButton.addEventListener("click", archiveSelectedTemplate);
     els.testConnectionsButton.addEventListener("click", loadSettings);
+    els.initializeBlobsButton.addEventListener("click", initializeBlobStores);
+    els.restoreTemplateButton.addEventListener("click", restoreDefaultTemplate);
     els.exportJsonButton.addEventListener("click", () => exportBackup("json"));
     els.exportCsvButton.addEventListener("click", () => exportBackup("csv"));
     els.sidebarLogoutButton.addEventListener("click", () => {

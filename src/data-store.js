@@ -289,7 +289,7 @@ async function updateMessageStatus(id, status, env = process.env) {
 }
 
 async function listRawByPrefix(targetStore, prefix, limit = 500) {
-  const listed = await targetStore.list({ prefix }).catch(() => ({ blobs: [] }));
+  const listed = await targetStore.list({ prefix });
   const keys = (listed.blobs || []).map((blob) => blob.key).filter(Boolean).sort().slice(-limit);
   const records = await Promise.all(keys.map((key) => getJsonSafe(targetStore, key)));
   return records.filter((item) => item && typeof item === "object");

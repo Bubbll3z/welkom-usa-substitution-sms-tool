@@ -14,6 +14,7 @@ process.env.MESSAGE_STORAGE_PROVIDER = "memory";
 const { handler } = require("../netlify/functions/api");
 const { verifySession } = require("../src/auth");
 const { clearMemoryHistory } = require("../src/history");
+const { resetStoreFactory, setStoreFactory } = require("../src/data-store");
 const { buildSubstitutionMessage, sendSms, smsLength, validateMessage } = require("../src/sms");
 const { consentFromAttributes, findOrder, getAccessToken, normalizeOrderQuery, searchProductsForSubstitutions } = require("../src/shopify");
 
@@ -186,6 +187,7 @@ test.beforeEach(() => {
   delete process.env.SHOPIFY_CLIENT_ID;
   delete process.env.SHOPIFY_CLIENT_SECRET;
   delete process.env.BLOB_INIT_ENABLED;
+  resetStoreFactory();
 });
 
 test("authentication supports login, session, logout, wrong password, and expired session", async () => {
@@ -327,6 +329,22 @@ test("manual product search reports missing Shopify configuration", async () => 
   const body = JSON.parse(response.body);
   assert.equal(response.statusCode, 500);
   assert.equal(body.code, "SHOPIFY_ERROR");
+});
+
+test("manual product search can exclude the selected order variant", async () => {
+  const cookie = await loginCookie();
+  const originalFetch = global.fetch;
+  global.fetch = mockFetch({ variant: variantNode({ id: "gid://shopify/ProductVariant/old" }) });
+  try {
+    const response = await handler(event("/api/product-search", {
+      query: "Crunchie",
+      excludeVariantId: "gid://shopify/ProductVariant/old"
+    }, { cookie }));
+    assert.equal(response.statusCode, 200);
+    assert.equal(JSON.parse(response.body).products.length, 0);
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 test("send revalidates order consent, line item, substitute inventory, duplicate and idempotency", async () => {
@@ -472,6 +490,62 @@ test("dashboard, backup and filtered history endpoints are protected and do not 
   }
 });
 
+test("dashboard still loads when message history storage is unavailable", async () => {
+  const cookie = await loginCookie();
+  process.env.MESSAGE_STORAGE_PROVIDER = "netlify-blobs";
+  setStoreFactory(() => ({
+    async list() {
+      throw new Error("storage unavailable");
+    },
+    async get() {
+      throw new Error("storage unavailable");
+    },
+    async setJSON() {
+      throw new Error("storage unavailable");
+    }
+  }));
+  try {
+    const dashboard = await handler(event("/api/dashboard", undefined, { cookie }, "GET"));
+    assert.equal(dashboard.statusCode, 200);
+    const body = JSON.parse(dashboard.body);
+    assert.equal(body.success, true);
+    assert.equal(body.stats.total, 0);
+    assert.equal(body.status.storageHealthy, false);
+    assert.match(body.warning, /storage/i);
+  } finally {
+    process.env.MESSAGE_STORAGE_PROVIDER = "memory";
+    resetStoreFactory();
+  }
+});
+
+test("message history still loads empty when storage is unavailable", async () => {
+  const cookie = await loginCookie();
+  process.env.MESSAGE_STORAGE_PROVIDER = "netlify-blobs";
+  setStoreFactory(() => ({
+    async list() {
+      throw new Error("storage unavailable");
+    },
+    async get() {
+      throw new Error("storage unavailable");
+    },
+    async setJSON() {
+      throw new Error("storage unavailable");
+    }
+  }));
+  try {
+    const history = await handler(event("/api/message-history?limit=10", undefined, { cookie }, "GET"));
+    assert.equal(history.statusCode, 200);
+    const body = JSON.parse(history.body);
+    assert.equal(body.success, true);
+    assert.equal(body.records.length, 0);
+    assert.equal(body.storageHealthy, false);
+    assert.match(body.warning, /history storage/i);
+  } finally {
+    process.env.MESSAGE_STORAGE_PROVIDER = "memory";
+    resetStoreFactory();
+  }
+});
+
 test("template endpoint validates approved wording and supports archive", async () => {
   const cookie = await loginCookie();
 
@@ -502,10 +576,69 @@ test("template endpoint validates approved wording and supports archive", async 
   assert.equal(JSON.parse(remaining.body).templates.some((item) => item.id === template.id), false);
 });
 
+test("template endpoint falls back safely when template storage is unavailable", async () => {
+  const cookie = await loginCookie();
+  process.env.MESSAGE_STORAGE_PROVIDER = "netlify-blobs";
+  setStoreFactory(() => ({
+    async list() {
+      throw new Error("template storage unavailable");
+    },
+    async get() {
+      throw new Error("template storage unavailable");
+    },
+    async setJSON() {
+      throw new Error("template storage unavailable");
+    }
+  }));
+  try {
+    const response = await handler(event("/api/templates", undefined, { cookie }, "GET"));
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.success, true);
+    assert.equal(body.storageHealthy, false);
+    assert.equal(body.templates.length, 1);
+    assert.match(body.warning, /default template/i);
+  } finally {
+    process.env.MESSAGE_STORAGE_PROVIDER = "memory";
+    resetStoreFactory();
+  }
+});
+
+test("template save returns safe storage errors without leaking secret-like details", async () => {
+  const cookie = await loginCookie();
+  process.env.MESSAGE_STORAGE_PROVIDER = "netlify-blobs";
+  setStoreFactory(() => ({
+    async list() {
+      return { blobs: [] };
+    },
+    async get() {
+      return null;
+    },
+    async setJSON() {
+      throw new Error("TWILIO_AUTH_TOKEN secret failed");
+    }
+  }));
+  try {
+    const response = await handler(event("/api/templates", {
+      name: "Default substitution",
+      body: "Welkom USA: Hi [FIRST NAME], [UNAVAILABLE ITEM] in order #[ORDER NUMBER] is unavailable. We can substitute it with [SUBSTITUTE ITEM]. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out."
+    }, { cookie }));
+    assert.equal(response.statusCode, 500);
+    const body = JSON.parse(response.body);
+    assert.equal(body.code, "STORAGE_ERROR");
+    assert.match(body.error, /protected configuration value/i);
+    assert.doesNotMatch(response.body, /TWILIO_AUTH_TOKEN|secret failed/);
+  } finally {
+    process.env.MESSAGE_STORAGE_PROVIDER = "memory";
+    resetStoreFactory();
+  }
+});
+
 test("blob initialization endpoint requires staff authentication and is idempotent", async () => {
   const cookie = await loginCookie();
   const disabled = await handler(event("/api/admin/init-blobs", {}, { cookie }, "POST"));
-  assert.equal(disabled.statusCode, 404);
+  assert.equal(disabled.statusCode, 403);
+  assert.equal(JSON.parse(disabled.body).code, "BLOB_INIT_DISABLED");
 
   process.env.BLOB_INIT_ENABLED = "true";
   const blocked = await handler(event("/api/admin/init-blobs", {}, {}, "POST"));
