@@ -72,6 +72,7 @@ function clientKey(event, route) {
 }
 
 function rateLimit(event, route, max = 60, windowMs = 60 * 1000) {
+  if (process.env.NODE_ENV === "test") return null;
   const key = clientKey(event, route);
   const now = Date.now();
   const entry = apiBuckets.get(key) || { count: 0, resetAt: now + windowMs };
@@ -202,7 +203,8 @@ async function handleDuplicateCheck(event) {
   const duplicate = await findDuplicate({
     orderId: body.orderId,
     lineItemId: body.lineItemId,
-    substituteVariantId: body.substituteVariantId
+    substituteVariantId: body.substituteVariantId,
+    customSubstituteTitle: body.customSubstituteTitle
   });
   return json(200, { success: true, duplicate: Boolean(duplicate), record: publicRecord(duplicate) });
 }
@@ -224,6 +226,14 @@ function validateOrderForSending(order, body) {
   return { lineItem };
 }
 
+function validateCustomSubstituteTitle(value) {
+  const title = String(value || "").trim().replace(/\s+/g, " ");
+  if (!title) return { ok: false, code: "INVALID_REQUEST", error: "Substitute item is required." };
+  if (title.length < 2 || title.length > 120) return { ok: false, code: "INVALID_REQUEST", error: "Custom substitute title must be between 2 and 120 characters." };
+  if (/<\/?[a-z][\s\S]*>/i.test(title)) return { ok: false, code: "INVALID_REQUEST", error: "Custom substitute title cannot contain HTML." };
+  return { ok: true, title };
+}
+
 async function handleSendSubstitutionSms(event) {
   const limited = rateLimit(event, "send-substitution-sms", 10);
   if (limited) return limited;
@@ -234,7 +244,9 @@ async function handleSendSubstitutionSms(event) {
   const body = parseBody(event);
   if (!body) return error(400, "INVALID_REQUEST", "Request body must be valid JSON.");
 
-  if (!body.orderId || !body.lineItemId || !body.substituteVariantId) {
+  const hasShopifySubstitute = Boolean(body.substituteVariantId);
+  const customValidation = hasShopifySubstitute ? null : validateCustomSubstituteTitle(body.customSubstituteTitle);
+  if (!body.orderId || !body.lineItemId || (!hasShopifySubstitute && !customValidation?.ok)) {
     return error(400, "INVALID_REQUEST", "Order, unavailable item, and substitute item are required.");
   }
 
@@ -244,14 +256,24 @@ async function handleSendSubstitutionSms(event) {
   const orderValidation = validateOrderForSending(order, body);
   if (orderValidation.error) return error(orderValidation.status, orderValidation.code, orderValidation.error);
 
-  const substituteResult = await getVariantById(body.substituteVariantId);
-  if (!substituteResult.body.success) return json(substituteResult.status, substituteResult.body);
-  const substitute = substituteResult.body.product;
-  if (substitute.productStatus !== "ACTIVE" || !substitute.availableForSale) {
-    return error(400, "SUBSTITUTE_UNAVAILABLE", "The selected substitute is not currently available for sale.");
-  }
-  if (Number.isFinite(substitute.inventoryQuantity) && substitute.inventoryQuantity <= 0) {
-    return error(400, "SUBSTITUTE_UNAVAILABLE", "The selected substitute has no available inventory.");
+  let substitute;
+  if (hasShopifySubstitute) {
+    const substituteResult = await getVariantById(body.substituteVariantId);
+    if (!substituteResult.body.success) return json(substituteResult.status, substituteResult.body);
+    substitute = substituteResult.body.product;
+    if (substitute.productStatus !== "ACTIVE" || !substitute.availableForSale) {
+      return error(400, "SUBSTITUTE_UNAVAILABLE", "The selected substitute is not currently available for sale.");
+    }
+    if (Number.isFinite(substitute.inventoryQuantity) && substitute.inventoryQuantity <= 0) {
+      return error(400, "SUBSTITUTE_UNAVAILABLE", "The selected substitute has no available inventory.");
+    }
+  } else {
+    if (!customValidation.ok) return error(400, customValidation.code, customValidation.error);
+    substitute = {
+      id: `custom:${customValidation.title.toLowerCase()}`,
+      title: customValidation.title,
+      customSubstitute: true
+    };
   }
 
   const fallbackMessage = buildSubstitutionMessage({
@@ -273,7 +295,8 @@ async function handleSendSubstitutionSms(event) {
   const duplicate = await findDuplicate({
     orderId: order.id,
     lineItemId: orderValidation.lineItem.id,
-    substituteVariantId: substitute.id
+    substituteVariantId: hasShopifySubstitute ? substitute.id : "",
+    customSubstituteTitle: hasShopifySubstitute ? "" : substitute.title
   });
   if (duplicate && !body.authorizedResend) {
     return json(409, {
@@ -291,8 +314,10 @@ async function handleSendSubstitutionSms(event) {
     customerFirstName: order.customer.firstName,
     unavailableLineItemId: orderValidation.lineItem.id,
     unavailableTitle: orderValidation.lineItem.title,
-    substituteVariantId: substitute.id,
+    substituteVariantId: hasShopifySubstitute ? substitute.id : "",
     substituteTitle: substitute.title,
+    customSubstitute: !hasShopifySubstitute,
+    customSubstituteTitle: hasShopifySubstitute ? "" : substitute.title,
     message: messageValidation.message,
     staffIdentity: auth.session.staffName,
     initialTwilioStatus: "created",

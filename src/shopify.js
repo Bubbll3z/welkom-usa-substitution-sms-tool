@@ -288,12 +288,25 @@ async function searchProductsForSubstitutions(searchText, options = {}) {
 
   const safe = escapeSearchTerm(clean).split(/\s+/).slice(0, 8).join(" ");
   const compact = clean.replace(/[^\w-]/g, "");
-  const searchQuery = compact && compact.length === clean.length
-    ? `(sku:${compact} OR barcode:${compact} OR title:"${safe}")`
-    : `title:"${safe}"`;
-  const result = await shopifyGraphql(query, { query: searchQuery }, options);
-  if (!result.ok) return [];
-  return (result.json.data?.productVariants?.nodes || [])
+  const queryAttempts = [
+    safe,
+    compact ? `sku:${compact}*` : "",
+    compact ? `barcode:${compact}*` : "",
+    `title:"${safe}"`
+  ].filter(Boolean);
+  const variants = [];
+  const seen = new Set();
+  for (const searchQuery of queryAttempts) {
+    const result = await shopifyGraphql(query, { query: searchQuery }, options);
+    if (!result.ok) continue;
+    for (const variant of result.json.data?.productVariants?.nodes || []) {
+      if (!variant?.id || seen.has(variant.id)) continue;
+      seen.add(variant.id);
+      variants.push(variant);
+    }
+    if (variants.length >= (options.limit || 12)) break;
+  }
+  return variants
     .filter((variant) => usableSubstitute(variant, options.excludeVariantId))
     .map(simplifyVariant)
     .slice(0, options.limit || 12);

@@ -25,12 +25,12 @@ function hashIdempotency(parts) {
   return crypto.createHash("sha256").update(parts.filter(Boolean).join("|")).digest("hex");
 }
 
-function duplicateKey({ orderId, lineItemId, unavailableLineItemId, substituteVariantId }) {
-  return hashIdempotency([orderId, lineItemId || unavailableLineItemId, substituteVariantId]);
+function duplicateKey({ orderId, lineItemId, unavailableLineItemId, substituteVariantId, customSubstituteTitle }) {
+  return hashIdempotency([orderId, lineItemId || unavailableLineItemId, substituteVariantId || customSubstituteTitle]);
 }
 
-function idempotencyKey({ orderId, lineItemId, unavailableLineItemId, substituteVariantId, message }) {
-  return hashIdempotency([orderId, lineItemId || unavailableLineItemId, substituteVariantId, message]);
+function idempotencyKey({ orderId, lineItemId, unavailableLineItemId, substituteVariantId, customSubstituteTitle, message }) {
+  return hashIdempotency([orderId, lineItemId || unavailableLineItemId, substituteVariantId || customSubstituteTitle, message]);
 }
 
 function publicRecord(record) {
@@ -45,6 +45,7 @@ function publicRecord(record) {
     unavailableTitle: record.unavailableTitle,
     substituteVariantId: record.substituteVariantId,
     substituteTitle: record.substituteTitle,
+    customSubstitute: Boolean(record.customSubstitute),
     message: record.message,
     staffIdentity: record.staffIdentity,
     createdAt: record.createdAt,

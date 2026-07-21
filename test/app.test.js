@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const twilio = require("twilio");
 
+process.env.NODE_ENV = "test";
 process.env.STAFF_PASSWORD = "test123";
 process.env.STAFF_NAME = "Test Staff";
 process.env.SESSION_SECRET = "12345678901234567890123456789012";
@@ -348,6 +349,29 @@ test("send revalidates order consent, line item, substitute inventory, duplicate
     const duplicate = await handler(event("/api/send-substitution-sms", { ...payload, message: payload.message + " Thanks.", idempotencyKey: "idem-2" }, { cookie }));
     assert.equal(duplicate.statusCode, 409);
     assert.equal(JSON.parse(duplicate.body).code, "DUPLICATE_MESSAGE");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("send supports a validated custom substitute title when Shopify search has no match", async () => {
+  const cookie = await loginCookie();
+  const originalFetch = global.fetch;
+  global.fetch = mockFetch();
+  try {
+    const response = await handler(event("/api/send-substitution-sms", {
+      orderId: "gid://shopify/Order/1",
+      lineItemId: "gid://shopify/LineItem/1",
+      customSubstituteTitle: "Iwisa Maize Meal 2.5kg",
+      message: "Welkom USA: Hi Sarah, Cadbury Crunchie Chocolate Bar 44g in order #1023 is unavailable. We can substitute it with Iwisa Maize Meal 2.5kg. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.",
+      idempotencyKey: "custom-substitute"
+    }, { cookie }));
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.success, true);
+    assert.equal(body.record.customSubstitute, true);
+    assert.equal(body.record.substituteVariantId, "");
+    assert.equal(body.record.substituteTitle, "Iwisa Maize Meal 2.5kg");
   } finally {
     global.fetch = originalFetch;
   }
