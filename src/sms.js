@@ -2,6 +2,8 @@ const twilio = require("twilio");
 
 const STORE_NAME = "Welkom USA";
 const MAX_SMS_LENGTH = 320;
+const GSM_7_BASIC = "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ\u001bÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
+const GSM_7_EXTENDED = "^{}\\[~]|€";
 
 function isDryRun(env = process.env) {
   const value = env.SMS_DRY_RUN ?? env.DRY_RUN ?? "true";
@@ -29,6 +31,47 @@ function buildSubstitutionMessage({ firstName, unavailableItem, substituteItem, 
   )} is unavailable. We can substitute it with ${substituteItem}. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.`;
 }
 
+function isGsm7(text) {
+  return Array.from(String(text || "")).every((char) => GSM_7_BASIC.includes(char) || GSM_7_EXTENDED.includes(char));
+}
+
+function smsLength(text) {
+  const value = String(text || "");
+  if (!isGsm7(value)) {
+    return { encoding: "UCS-2", length: Array.from(value).length, segments: segmentCount(Array.from(value).length, 70, 67) };
+  }
+  const length = Array.from(value).reduce((total, char) => total + (GSM_7_EXTENDED.includes(char) ? 2 : 1), 0);
+  return { encoding: "GSM-7", length, segments: segmentCount(length, 160, 153) };
+}
+
+function segmentCount(length, singleLimit, multipartLimit) {
+  if (!length) return 0;
+  if (length <= singleLimit) return 1;
+  return Math.ceil(length / multipartLimit);
+}
+
+function validateMessage(message, orderName, env = process.env) {
+  const cleanMessage = String(message || "").trim();
+  const maxLength = Number(env.MAX_SMS_LENGTH || MAX_SMS_LENGTH);
+
+  if (!cleanMessage) {
+    return { ok: false, code: "MESSAGE_EMPTY", error: "Message cannot be empty." };
+  }
+  if (!cleanMessage.startsWith(`${STORE_NAME}:`)) {
+    return { ok: false, code: "MESSAGE_INVALID", error: `Message must start with "${STORE_NAME}:".` };
+  }
+  if (orderName && !cleanMessage.includes(`#${cleanOrderNumber(orderName)}`)) {
+    return { ok: false, code: "MESSAGE_INVALID", error: "Message must include the order number." };
+  }
+  if (/\[[A-Z ]+\]/.test(cleanMessage)) {
+    return { ok: false, code: "MESSAGE_INVALID", error: "Message still contains unresolved placeholders." };
+  }
+  if (cleanMessage.length > maxLength) {
+    return { ok: false, code: "MESSAGE_TOO_LONG", error: `Message must be ${maxLength} characters or fewer.` };
+  }
+  return { ok: true, message: cleanMessage, estimate: smsLength(cleanMessage) };
+}
+
 function hasTwilioConfig(env = process.env) {
   return Boolean(
     env.TWILIO_ACCOUNT_SID &&
@@ -46,12 +89,21 @@ function makeTwilioClient(env = process.env) {
   return twilio(env.TWILIO_ACCOUNT_SID, env.TWILIO_AUTH_TOKEN);
 }
 
-function twilioParams({ to, body }, env = process.env) {
+function callbackUrl(env = process.env) {
+  const base = String(env.TWILIO_STATUS_CALLBACK_BASE_URL || "").replace(/\/$/, "");
+  return base ? `${base}/api/twilio-status` : "";
+}
+
+function twilioParams({ to, body, recordId }, env = process.env) {
   const params = { to, body };
   if (env.TWILIO_MESSAGING_SERVICE_SID) {
     params.messagingServiceSid = env.TWILIO_MESSAGING_SERVICE_SID;
   } else {
     params.from = env.TWILIO_FROM_NUMBER || env.TWILIO_PHONE_NUMBER;
+  }
+  const statusCallback = callbackUrl(env);
+  if (statusCallback) {
+    params.statusCallback = recordId ? `${statusCallback}?recordId=${encodeURIComponent(recordId)}` : statusCallback;
   }
   return params;
 }
@@ -65,21 +117,17 @@ function safeTwilioError(error) {
   return "SMS could not be sent. Please try again.";
 }
 
-async function sendSms({ phone, message, env = process.env, twilioClient }) {
+async function sendSms({ phone, message, orderName, recordId, env = process.env, twilioClient }) {
   const cleanPhone = String(phone || "").trim();
-  const cleanMessage = String(message || "").trim();
+  const validation = validateMessage(message, orderName, env);
   const dryRun = isDryRun(env);
 
   if (!isE164(cleanPhone)) {
-    return { status: 400, body: { success: false, error: "Phone number must be valid E.164 format." } };
+    return { status: 400, body: { success: false, code: "PHONE_INVALID", error: "Phone number must be valid E.164 format." } };
   }
 
-  if (!cleanMessage || !cleanMessage.startsWith(`${STORE_NAME}:`)) {
-    return { status: 400, body: { success: false, error: `Message must start with "${STORE_NAME}:".` } };
-  }
-
-  if (cleanMessage.length > MAX_SMS_LENGTH) {
-    return { status: 400, body: { success: false, error: `Message must be ${MAX_SMS_LENGTH} characters or fewer.` } };
+  if (!validation.ok) {
+    return { status: 400, body: { success: false, code: validation.code, error: validation.error } };
   }
 
   if (dryRun) {
@@ -90,18 +138,19 @@ async function sendSms({ phone, message, env = process.env, twilioClient }) {
         dryRun: true,
         message: "Dry run successful. SMS was not actually sent.",
         recipient: redactPhone(cleanPhone),
-        providerStatus: "not-sent"
+        providerStatus: "not-sent",
+        estimate: validation.estimate
       }
     };
   }
 
   if (!hasTwilioConfig(env)) {
-    return { status: 500, body: { success: false, error: "Twilio is not configured." } };
+    return { status: 500, body: { success: false, code: "TWILIO_ERROR", error: "Twilio is not configured." } };
   }
 
   try {
     const client = twilioClient || makeTwilioClient(env);
-    const sms = await client.messages.create(twilioParams({ to: cleanPhone, body: cleanMessage }, env));
+    const sms = await client.messages.create(twilioParams({ to: cleanPhone, body: validation.message, recordId }, env));
     return {
       status: 200,
       body: {
@@ -110,7 +159,8 @@ async function sendSms({ phone, message, env = process.env, twilioClient }) {
         message: "SMS sent successfully.",
         recipient: redactPhone(cleanPhone),
         providerStatus: sms.status || "sent",
-        sid: sms.sid
+        sid: sms.sid,
+        estimate: validation.estimate
       }
     };
   } catch (error) {
@@ -118,6 +168,7 @@ async function sendSms({ phone, message, env = process.env, twilioClient }) {
       status: 502,
       body: {
         success: false,
+        code: "TWILIO_ERROR",
         dryRun: false,
         error: safeTwilioError(error),
         recipient: redactPhone(cleanPhone),
@@ -132,6 +183,11 @@ async function sendSms({ phone, message, env = process.env, twilioClient }) {
   }
 }
 
+function validateTwilioSignature({ url, params, signature, env = process.env }) {
+  if (!env.TWILIO_AUTH_TOKEN || !signature || !url) return false;
+  return twilio.validateRequest(env.TWILIO_AUTH_TOKEN, signature, url, params);
+}
+
 module.exports = {
   MAX_SMS_LENGTH,
   STORE_NAME,
@@ -139,6 +195,11 @@ module.exports = {
   cleanOrderNumber,
   isDryRun,
   isE164,
+  isGsm7,
   redactPhone,
-  sendSms
+  sendSms,
+  smsLength,
+  twilioParams,
+  validateMessage,
+  validateTwilioSignature
 };

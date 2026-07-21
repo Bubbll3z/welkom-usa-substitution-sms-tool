@@ -956,6 +956,10 @@
                   <label for="password">Staff password</label>
                   <input id="password" type="password" autocomplete="current-password">
                 </div>
+                <div class="search-row" style="margin-bottom:12px;">
+                  <button id="loginButton" class="btn-outline" type="button">Log In</button>
+                  <button id="logoutButton" class="btn-outline" type="button">Logout</button>
+                </div>
                 <div class="search-row">
                   <div>
                     <label for="orderQuery">Order number</label>
@@ -976,10 +980,7 @@
                   <span id="consentBadge" class="badge warn">Consent not recorded</span>
                 </div>
                 <dl id="customerDetails" class="details"></dl>
-                <label class="consent-row">
-                  <input id="consentCheck" type="checkbox">
-                  <span>I confirm this customer has SMS opt-in/consent recorded before sending.</span>
-                </label>
+                <div id="consentNotice" class="consent-row">SMS consent must come from the Shopify order attribute. It cannot be added here.</div>
               </div>
             </article>
 
@@ -1100,6 +1101,8 @@
       drawerBackdrop: document.getElementById("drawerBackdrop"),
       menuButton: document.getElementById("menuButton"),
       password: document.getElementById("password"),
+      loginButton: document.getElementById("loginButton"),
+      logoutButton: document.getElementById("logoutButton"),
       orderQuery: document.getElementById("orderQuery"),
       searchButton: document.getElementById("searchButton"),
       searchState: document.getElementById("searchState"),
@@ -1120,8 +1123,8 @@
       sendReadiness: document.getElementById("sendReadiness"),
       messageHelp: document.getElementById("messageHelp"),
       templateButton: document.getElementById("templateButton"),
-      consentCheck: document.getElementById("consentCheck"),
       consentBadge: document.getElementById("consentBadge"),
+      consentNotice: document.getElementById("consentNotice"),
       modalBackdrop: document.getElementById("modalBackdrop"),
       confirmBody: document.getElementById("confirmBody"),
       cancelSendButton: document.getElementById("cancelSendButton"),
@@ -1133,70 +1136,145 @@
       historyNav: document.getElementById("historyNav")
     };
 
-    const STORAGE_KEY = "welkomSmsHistory";
     const TEMPLATE = "Welkom USA: Hi [FIRST NAME], [UNAVAILABLE ITEM] in order #[ORDER NUMBER] is unavailable. We can substitute it with [SUBSTITUTE ITEM]. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.";
+    const GSM_7_BASIC = "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ\u001bÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
+    const GSM_7_EXTENDED = "^{}\\[~]|€";
 
     const state = {
+      authenticated: false,
+      staffName: "",
       order: null,
       unavailableItem: null,
       substituteItem: null,
-      history: readHistory()
+      authorizedResend: false,
+      lastFocus: null
     };
 
-    function iconSafeText(value) {
-      return String(value || "").replace(/[&<>"']/g, (char) => ({
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        "\"": "&quot;",
-        "'": "&#39;"
-      }[char]));
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = String(text);
+      return node;
+    }
+
+    function clear(node) {
+      while (node.firstChild) node.removeChild(node.firstChild);
+    }
+
+    function appendDetails(container, rows) {
+      clear(container);
+      rows.forEach(([label, value, decorate]) => {
+        container.append(el("dt", "", label));
+        const dd = el("dd");
+        if (decorate) {
+          decorate(dd);
+        } else {
+          dd.textContent = value || "-";
+        }
+        container.append(dd);
+      });
     }
 
     function toast(type, message) {
-      const node = document.createElement("div");
-      node.className = `toast ${type}`;
-      node.textContent = message;
+      const node = el("div", `toast ${type}`, message);
       els.toastStack.appendChild(node);
-      setTimeout(() => node.remove(), 4200);
+      setTimeout(() => node.remove(), 4500);
     }
 
-    function setSearchState(text, type = "") {
-      els.searchState.textContent = text;
-      els.searchState.style.color = type === "error" ? "var(--error)" : type === "success" ? "var(--green)" : "var(--muted)";
+    async function api(path, options = {}) {
+      const response = await fetch(path, {
+        credentials: "same-origin",
+        ...options,
+        headers: {
+          ...(options.body ? { "Content-Type": "application/json" } : {}),
+          ...(options.headers || {})
+        }
+      });
+      const result = await response.json().catch(() => ({ success: false, error: "Invalid server response." }));
+      if (!response.ok || !result.success) {
+        const error = new Error(result.error || "Request failed.");
+        error.code = result.code;
+        error.result = result;
+        error.status = response.status;
+        throw error;
+      }
+      return result;
     }
 
-    function setEmptyOrder() {
-      els.customerDetails.innerHTML = detailsHtml([
-        ["Name", "-"],
-        ["Phone", "-"],
-        ["Email", "-"],
-        ["Order Date", "-"],
-        ["Shipping Address", "-"]
-      ]);
-      els.orderDetails.innerHTML = detailsHtml([
-        ["Order Number", "-"],
-        ["Total", "-"],
-        ["Status", "-"],
-        ["Items", "-"]
-      ]);
-      els.lineItems.innerHTML = `<div class="empty">Search an order first.</div>`;
-      els.substitutions.innerHTML = `<div class="empty">Select an unavailable item to review substitution options.</div>`;
-      updateConsentBadge();
+    function setAuth(authenticated, staffName = "") {
+      state.authenticated = authenticated;
+      state.staffName = staffName;
+      els.password.disabled = authenticated;
+      els.loginButton.disabled = authenticated;
+      els.logoutButton.disabled = !authenticated;
+      els.searchButton.disabled = !authenticated;
+      els.subSearchButton.disabled = !authenticated;
+      els.subSearchState.textContent = authenticated ? "Shopify suggestions" : "Log in first";
+      updateSendState();
     }
 
-    function detailsHtml(rows) {
-      return rows.map(([label, value]) => `<dt>${iconSafeText(label)}</dt><dd>${value || "-"}</dd>`).join("");
+    async function checkSession() {
+      try {
+        const result = await api("/api/session");
+        setAuth(true, result.staffName);
+        toast("success", `Logged in as ${result.staffName}.`);
+        await loadHistory();
+      } catch (error) {
+        setAuth(false);
+        renderHistory([]);
+      }
+    }
+
+    async function login() {
+      if (!els.password.value) {
+        toast("error", "Enter the staff password first.");
+        return;
+      }
+      try {
+        const result = await api("/api/login", {
+          method: "POST",
+          body: JSON.stringify({ password: els.password.value, staffName: "Welkom USA Staff" })
+        });
+        els.password.value = "";
+        setAuth(true, result.staffName);
+        toast("success", "Logged in.");
+        await loadHistory();
+      } catch (error) {
+        toast("error", error.message);
+      }
+    }
+
+    async function logout() {
+      try {
+        await api("/api/logout", { method: "POST" });
+      } catch (error) {
+      } finally {
+        setAuth(false);
+        toast("success", "Logged out.");
+      }
+    }
+
+    function safeImageUrl(src) {
+      try {
+        const url = new URL(src);
+        return url.protocol === "https:" ? url.href : "";
+      } catch (error) {
+        return "";
+      }
     }
 
     function productImage(src, title) {
-      if (src) return `<img class="thumb" src="${iconSafeText(src)}" alt="${iconSafeText(title)}">`;
-      return `<div class="thumb thumb-placeholder" aria-hidden="true">WE</div>`;
+      const safe = safeImageUrl(src);
+      if (!safe) return el("div", "thumb thumb-placeholder", "WE");
+      const img = el("img", "thumb");
+      img.src = safe;
+      img.alt = title || "";
+      return img;
     }
 
     function formatAddress(order) {
       const address = order?.shippingAddress || {};
-      return [address.name, address.city, address.province, address.zip, address.country].filter(Boolean).join(", ");
+      return [address.name, address.address1, address.address2, address.city, address.province, address.zip, address.country].filter(Boolean).join(", ");
     }
 
     function formatDate(value) {
@@ -1210,11 +1288,24 @@
       return String(state.order?.name || "").replace(/^#/, "");
     }
 
+    function isGsm7(text) {
+      return Array.from(String(text || "")).every((char) => GSM_7_BASIC.includes(char) || GSM_7_EXTENDED.includes(char));
+    }
+
+    function smsEstimate(text) {
+      const chars = Array.from(String(text || ""));
+      if (!isGsm7(text)) {
+        const length = chars.length;
+        return { encoding: "UCS-2", length, segments: length ? (length <= 70 ? 1 : Math.ceil(length / 67)) : 0 };
+      }
+      const length = chars.reduce((total, char) => total + (GSM_7_EXTENDED.includes(char) ? 2 : 1), 0);
+      return { encoding: "GSM-7", length, segments: length ? (length <= 160 ? 1 : Math.ceil(length / 153)) : 0 };
+    }
+
     function fillTemplate() {
       if (!state.order || !state.unavailableItem || !state.substituteItem) return;
-      const firstName = state.order.customer?.firstName || "there";
       const values = {
-        "[FIRST NAME]": firstName,
+        "[FIRST NAME]": state.order.customer?.firstName || "there",
         "[ORDER NUMBER]": orderNumberClean(),
         "[UNAVAILABLE ITEM]": state.unavailableItem.title || "your item",
         "[SUBSTITUTE ITEM]": state.substituteItem.title || "a substitute item"
@@ -1223,229 +1314,218 @@
       updateMessageState();
     }
 
-    function smsSegments(text) {
-      if (!text.length) return 0;
-      if (text.length <= 160) return 1;
-      return Math.ceil(text.length / 153);
-    }
-
-    function updateMessageState() {
-      const count = els.message.value.length;
-      const segments = smsSegments(els.message.value);
-      els.counter.textContent = `${count} / 320 · ${segments} segment${segments === 1 ? "" : "s"}`;
-      els.previewBubble.textContent = els.message.value || "Build a message by selecting an order and products.";
-      const time = new Date();
-      els.previewTime.textContent = time.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-      updateSendState();
-    }
-
     function updateConsentBadge() {
-      if (els.consentCheck.checked) {
-        els.consentBadge.className = "badge";
-        els.consentBadge.textContent = "SMS Opt-In";
-      } else {
-        els.consentBadge.className = "badge warn";
-        els.consentBadge.textContent = "Consent not recorded";
-      }
+      const granted = Boolean(state.order?.smsConsent?.granted);
+      els.consentBadge.className = granted ? "badge" : "badge error";
+      els.consentBadge.textContent = granted ? "SMS Opt-In" : "No SMS Consent";
+      els.consentNotice.textContent = granted
+        ? `Shopify order attribute recorded SMS consent = ${state.order.smsConsent.value}.`
+        : "Missing consent is treated as no consent, including accelerated checkout orders without the cart attribute.";
       updateSendState();
     }
 
     function missingSendRequirements() {
       const missing = [];
+      if (!state.authenticated) missing.push("staff is logged in");
       if (!state.order) missing.push("an order is loaded");
-      if (!state.order?.customer?.phone) missing.push("a customer phone number exists");
-      if (!els.consentCheck.checked) missing.push("SMS consent is recorded");
+      if (state.order?.cancelled) missing.push("order is not cancelled");
+      if (!state.order?.customer?.redactedPhone) missing.push("a customer phone number exists");
+      if (!state.order?.smsConsent?.granted) missing.push("SMS consent is recorded on Shopify");
       if (!state.unavailableItem) missing.push("an unavailable item is selected");
       if (!state.substituteItem) missing.push("a substitute item is selected");
+      if (state.substituteItem && state.substituteItem.availableForSale === false) missing.push("substitute is available");
+      if (Number.isFinite(state.substituteItem?.inventoryQuantity) && state.substituteItem.inventoryQuantity <= 0) missing.push("substitute has inventory");
       if (!els.message.value.trim()) missing.push("the message is not empty");
+      if (/\[[A-Z ]+\]/.test(els.message.value)) missing.push("all placeholders are replaced");
       return missing;
+    }
+
+    function updateMessageState() {
+      const estimate = smsEstimate(els.message.value);
+      els.counter.textContent = `${estimate.length} / 320 · ${estimate.segments} segment${estimate.segments === 1 ? "" : "s"} · ${estimate.encoding}`;
+      els.previewBubble.textContent = els.message.value || "Build a message by selecting an order and products.";
+      els.previewTime.textContent = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      updateSendState();
     }
 
     function updateSendState() {
       const missing = missingSendRequirements();
       els.sendButton.disabled = missing.length > 0;
       els.copyButton.disabled = !els.message.value.trim();
-      if (missing.length) {
-        els.sendReadiness.className = "notice warn";
-        els.sendReadiness.textContent = `Before sending, confirm: ${missing.join(", ")}.`;
-      } else {
-        els.sendReadiness.className = "notice";
-        els.sendReadiness.textContent = "Ready to send after final confirmation.";
-      }
-      els.messageHelp.textContent = state.order?.customer?.redactedPhone
-        ? `This message will be sent to ${state.order.customer.redactedPhone}`
-        : "Select an order, unavailable item and substitute item.";
+      els.sendReadiness.className = missing.length ? "notice warn" : "notice";
+      els.sendReadiness.textContent = missing.length ? `Before sending, confirm: ${missing.join(", ")}.` : "Ready to send after final confirmation.";
+      els.messageHelp.textContent = state.order?.customer?.redactedPhone ? `This message will be sent to ${state.order.customer.redactedPhone}` : "Select an order, unavailable item and substitute item.";
+    }
+
+    function setEmptyOrder() {
+      appendDetails(els.customerDetails, [["Name", "-"], ["Phone", "-"], ["Email", "-"], ["Order Date", "-"], ["Shipping Address", "-"]]);
+      appendDetails(els.orderDetails, [["Order ID", "-"], ["Order Number", "-"], ["Total", "-"], ["Financial Status", "-"], ["Fulfillment Status", "-"], ["Items", "-"]]);
+      clear(els.lineItems);
+      els.lineItems.append(el("div", "empty", "Search an order first."));
+      clear(els.substitutions);
+      els.substitutions.append(el("div", "empty", "Select an unavailable item to review substitution options."));
+      updateConsentBadge();
     }
 
     function renderOrder(order) {
       state.order = order;
       state.unavailableItem = null;
       state.substituteItem = null;
+      state.authorizedResend = false;
       els.message.value = "";
-      els.consentCheck.checked = Boolean(order.customer?.phone);
 
-      const phone = order.customer?.redactedPhone || "-";
-      els.customerDetails.innerHTML = detailsHtml([
-        ["Name", iconSafeText(`${order.customer?.firstName || ""} ${order.customer?.lastName || ""}`.trim())],
-        ["Phone", `${iconSafeText(phone)} ${els.consentCheck.checked ? '<span class="badge">SMS Opt-In</span>' : ""}`],
-        ["Email", iconSafeText(order.customer?.email || "-")],
-        ["Order Date", iconSafeText(formatDate(order.processedAt))],
-        ["Shipping Address", iconSafeText(formatAddress(order))]
+      appendDetails(els.customerDetails, [
+        ["Name", `${order.customer?.firstName || ""} ${order.customer?.lastName || ""}`.trim()],
+        ["Phone", order.customer?.redactedPhone || "-"],
+        ["Email", order.customer?.email || "-"],
+        ["Order Date", formatDate(order.processedAt)],
+        ["Shipping Address", formatAddress(order)]
       ]);
-
-      const status = order.displayFulfillmentStatus || "Unknown";
-      els.orderDetails.innerHTML = detailsHtml([
-        ["Order Number", `<span class="green-text">${iconSafeText(order.name)}</span>`],
-        ["Total", "Unavailable from current Shopify response"],
-        ["Status", `<span class="badge warn">${iconSafeText(status.replaceAll("_", " "))}</span>`],
-        ["Items", iconSafeText(`${order.lineItems.length} item${order.lineItems.length === 1 ? "" : "s"}`)]
+      appendDetails(els.orderDetails, [
+        ["Order ID", order.id],
+        ["Order Number", order.name],
+        ["Total", order.totalPrice || "-"],
+        ["Financial Status", order.displayFinancialStatus || "-"],
+        ["Fulfillment Status", order.displayFulfillmentStatus || "-"],
+        ["Cancellation", order.cancelled ? `Cancelled ${formatDate(order.cancelledAt)}` : "Not cancelled"],
+        ["Items", `${order.lineItems.length} item${order.lineItems.length === 1 ? "" : "s"}`]
       ]);
-
       renderLineItems(order.lineItems || []);
-      renderSubstitutions(order.substitutionProducts || []);
+      clear(els.substitutions);
+      els.substitutions.append(el("div", "empty", "Select an unavailable item to load Shopify substitution suggestions."));
       updateConsentBadge();
       updateMessageState();
+      if (order.cancelled) toast("error", "This order is cancelled, so messaging is disabled.");
+      if (!order.smsConsent?.granted) toast("error", "This order has no recorded SMS consent.");
     }
 
     function renderLineItems(items) {
+      clear(els.lineItems);
       if (!items.length) {
-        els.lineItems.innerHTML = `<div class="empty">No ordered items were returned by Shopify.</div>`;
+        els.lineItems.append(el("div", "empty", "No ordered items were returned by Shopify."));
         return;
       }
-
-      els.lineItems.innerHTML = "";
       items.forEach((item) => {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "product-row";
-        button.innerHTML = `
-          <span class="radio-dot" aria-hidden="true"></span>
-          ${productImage(item.imageUrl, item.title)}
-          <span>
-            <span class="product-title">${iconSafeText(item.title)}</span>
-            <span class="product-meta">${iconSafeText(item.variantTitle || "Default")} · Quantity: ${iconSafeText(item.quantity)}${item.sku ? ` · SKU: ${iconSafeText(item.sku)}` : ""}</span>
-          </span>
-          <span class="product-side">${iconSafeText(item.price || "")}</span>
-        `;
-        button.addEventListener("click", () => {
+        const button = productRow(item, true);
+        button.addEventListener("click", async () => {
           state.unavailableItem = item;
-          document.querySelectorAll("#lineItems .product-row").forEach((el) => el.classList.remove("selected"));
+          state.substituteItem = null;
+          state.authorizedResend = false;
+          document.querySelectorAll("#lineItems .product-row").forEach((node) => node.classList.remove("selected"));
           button.classList.add("selected");
-          fillTemplate();
-          updateSendState();
+          els.message.value = "";
+          updateMessageState();
+          await loadSubstitutionsForLineItem(item);
         });
-        els.lineItems.appendChild(button);
+        els.lineItems.append(button);
       });
     }
 
-    function priceDifferenceBadge(product) {
-      if (!state.unavailableItem?.price || !product.price) return `<span class="badge">Available</span>`;
-      const base = Number(String(state.unavailableItem.price).replace(/[^0-9.-]/g, ""));
-      const next = Number(String(product.price).replace(/[^0-9.-]/g, ""));
-      if (Number.isNaN(base) || Number.isNaN(next)) return `<span class="badge">Available</span>`;
-      const diff = next - base;
-      if (Math.abs(diff) < 0.01) return `<span class="badge">Same price</span>`;
-      return `<span class="badge ${diff > 0 ? "warn" : ""}">${diff > 0 ? "+" : "-"}$${Math.abs(diff).toFixed(2)}</span>`;
+    function productRow(product, orderedItem = false) {
+      const button = el("button", "product-row");
+      button.type = "button";
+      button.append(el("span", "radio-dot"));
+      button.append(productImage(product.imageUrl, product.title));
+      const textWrap = el("span");
+      textWrap.append(el("span", "product-title", product.title || "Untitled product"));
+      const meta = [
+        product.variantTitle || "Default",
+        orderedItem ? `Quantity: ${product.quantity}` : product.sku ? `SKU: ${product.sku}` : "",
+        product.barcode ? `Barcode: ${product.barcode}` : ""
+      ].filter(Boolean).join(" · ");
+      textWrap.append(el("span", "product-meta", meta));
+      button.append(textWrap);
+      const side = el("span", "product-side");
+      side.append(el("span", "", product.price || ""));
+      if (!orderedItem) {
+        const inventory = Number.isFinite(product.inventoryQuantity) ? `${product.inventoryQuantity} in stock` : "Inventory unknown";
+        const badge = el("span", product.availableForSale ? "badge" : "badge error", product.availableForSale ? inventory : "Unavailable");
+        side.append(badge);
+      }
+      button.append(side);
+      return button;
+    }
+
+    async function loadSubstitutionsForLineItem(item) {
+      clear(els.substitutions);
+      els.substitutions.append(el("div", "empty", "Loading Shopify suggestions for the selected item..."));
+      els.subSearchState.textContent = "Searching selected item...";
+      try {
+        const result = await api("/api/line-item-substitutions", {
+          method: "POST",
+          body: JSON.stringify({ orderId: state.order.id, lineItemId: item.id })
+        });
+        renderSubstitutions(result.products || []);
+        els.subSearchState.textContent = `${(result.products || []).length} suggestion${(result.products || []).length === 1 ? "" : "s"}`;
+      } catch (error) {
+        clear(els.substitutions);
+        els.substitutions.append(el("div", "empty", error.message));
+        els.subSearchState.textContent = "Search failed";
+      }
     }
 
     function renderSubstitutions(products) {
+      clear(els.substitutions);
       if (!products.length) {
-        els.substitutions.innerHTML = `<div class="empty">No Shopify product suggestions found yet. Search by title, SKU, or barcode, or add a custom substitute.</div>`;
+        els.substitutions.append(el("div", "empty", "No available Shopify substitute variants found. Search by title, SKU, or barcode."));
         return;
       }
-
-      els.substitutions.innerHTML = "";
       products.forEach((product) => {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "product-row";
-        const stockBadge = product.status && product.status !== "ACTIVE" ? `<span class="badge error">Out of stock</span>` : `<span class="badge">In stock</span>`;
-        button.innerHTML = `
-          <span class="radio-dot" aria-hidden="true"></span>
-          ${productImage(product.imageUrl, product.title)}
-          <span>
-            <span class="product-title">${iconSafeText(product.title)}</span>
-            <span class="product-meta">${iconSafeText(product.variantTitle || "Default")} · ${stockBadge}</span>
-          </span>
-          <span class="product-side">
-            <span>${iconSafeText(product.price || "")}</span>
-            ${priceDifferenceBadge(product)}
-          </span>
-        `;
-        button.addEventListener("click", () => {
+        const button = productRow(product);
+        button.addEventListener("click", async () => {
           state.substituteItem = product;
-          document.querySelectorAll("#substitutions .product-row").forEach((el) => el.classList.remove("selected"));
+          state.authorizedResend = false;
+          document.querySelectorAll("#substitutions .product-row").forEach((node) => node.classList.remove("selected"));
           button.classList.add("selected");
           fillTemplate();
-          updateSendState();
+          await checkDuplicate();
         });
-        els.substitutions.appendChild(button);
+        els.substitutions.append(button);
       });
     }
 
     async function searchOrder() {
-      if (!els.password.value || !els.orderQuery.value.trim()) {
-        toast("error", "Staff password and order number are required.");
-        setSearchState("Missing details", "error");
-        return;
-      }
-
+      if (!state.authenticated) return toast("error", "Please log in first.");
+      if (!els.orderQuery.value.trim()) return toast("error", "Order number is required.");
       els.searchButton.disabled = true;
-      els.searchButton.innerHTML = "Searching...";
-      setSearchState("Loading...");
-
+      els.searchButton.textContent = "Searching...";
+      els.searchState.textContent = "Loading...";
       try {
-        const response = await fetch("/api/order-search", {
+        const result = await api("/api/order-search", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ password: els.password.value, query: els.orderQuery.value.trim() })
+          body: JSON.stringify({ query: els.orderQuery.value.trim() })
         });
-        const result = await response.json();
-        if (!response.ok || !result.success) {
-          throw new Error(result.error || "Order lookup failed.");
-        }
         renderOrder(result.order);
-        setSearchState("Order loaded", "success");
+        els.searchState.textContent = "Order loaded";
+        els.searchState.style.color = "var(--green)";
         toast("success", `${result.order.name} loaded from Shopify.`);
       } catch (error) {
-        setSearchState("Lookup failed", "error");
-        toast("error", error.message || "Could not reach the order lookup service.");
+        els.searchState.textContent = "Lookup failed";
+        els.searchState.style.color = "var(--error)";
+        toast("error", error.message);
       } finally {
         els.searchButton.disabled = false;
-        els.searchButton.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg>Search`;
+        els.searchButton.textContent = "Search";
       }
     }
 
     async function searchSubstitutions() {
+      if (!state.authenticated) return toast("error", "Please log in first.");
       const query = els.subSearch.value.trim();
-      if (!query) {
-        toast("error", "Enter a product title, SKU, or barcode to search.");
-        return;
-      }
-      if (!els.password.value) {
-        toast("error", "Staff password is required for Shopify product search.");
-        return;
-      }
-
+      if (!query) return toast("error", "Enter a product title, SKU, or barcode to search.");
       els.subSearchButton.disabled = true;
       els.subSearchButton.textContent = "Searching...";
       els.subSearchState.textContent = "Searching Shopify...";
-
       try {
-        const response = await fetch("/api/product-search", {
+        const result = await api("/api/product-search", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ password: els.password.value, query })
+          body: JSON.stringify({ query })
         });
-        const result = await response.json();
-        if (!response.ok || !result.success) {
-          throw new Error(result.error || "Product search failed.");
-        }
         renderSubstitutions(result.products || []);
         els.subSearchState.textContent = `${(result.products || []).length} result${(result.products || []).length === 1 ? "" : "s"}`;
       } catch (error) {
         els.subSearchState.textContent = "Search failed";
-        toast("error", error.message || "Could not search Shopify products.");
+        toast("error", error.message);
       } finally {
         els.subSearchButton.disabled = false;
         els.subSearchButton.textContent = "Search";
@@ -1453,21 +1533,8 @@
     }
 
     function addCustomSubstitute() {
-      const title = window.prompt("Enter the substitute product name exactly as staff should see it in the SMS:");
-      if (!title || !title.trim()) return;
-      state.substituteItem = {
-        id: `custom-${Date.now()}`,
-        title: title.trim(),
-        variantTitle: "Custom",
-        price: "",
-        imageUrl: "",
-        status: "ACTIVE"
-      };
-      renderSubstitutions([state.substituteItem]);
-      const first = document.querySelector("#substitutions .product-row");
-      if (first) first.classList.add("selected");
-      fillTemplate();
-      toast("success", "Custom substitute added.");
+      els.subSearch.focus();
+      toast("success", "Search Shopify by title, SKU, or barcode, then select the exact variant.");
     }
 
     function insertToken(token) {
@@ -1480,34 +1547,47 @@
     }
 
     async function copyMessage() {
-      if (!els.message.value.trim()) {
-        toast("error", "Build a message first.");
-        return;
-      }
+      if (!els.message.value.trim()) return toast("error", "Build a message first.");
       await navigator.clipboard.writeText(els.message.value);
       toast("success", "Message copied.");
     }
 
-    function duplicateKey() {
-      return `${state.order?.name || ""}|${state.order?.customer?.phone || ""}|${els.message.value.trim()}`;
+    async function checkDuplicate() {
+      if (!state.order || !state.unavailableItem || !state.substituteItem) return;
+      try {
+        const result = await api("/api/duplicate-check", {
+          method: "POST",
+          body: JSON.stringify({
+            orderId: state.order.id,
+            lineItemId: state.unavailableItem.id,
+            substituteVariantId: state.substituteItem.id
+          })
+        });
+        if (result.duplicate) {
+          state.authorizedResend = false;
+          toast("error", "Duplicate warning: this substitution was already sent. The confirmation modal will require authorised resend.");
+        }
+      } catch (error) {
+      }
+    }
+
+    function idempotencyKey() {
+      return `${state.order.id}|${state.unavailableItem.id}|${state.substituteItem.id}|${els.message.value}`;
     }
 
     function openConfirmModal() {
       const missing = missingSendRequirements();
-      if (missing.length) {
-        toast("error", `Cannot send yet: ${missing.join(", ")}.`);
-        return;
-      }
-      const duplicate = state.history.some((item) => item.key === duplicateKey());
-      els.confirmBody.textContent = duplicate
-        ? "This exact message appears to have already been sent or dry-run for this order. Send it again?"
-        : `Send this substitution SMS to ${state.order.customer.redactedPhone || "the customer"}?`;
+      if (missing.length) return toast("error", `Cannot send yet: ${missing.join(", ")}.`);
+      const estimate = smsEstimate(els.message.value);
+      els.confirmBody.textContent = `Customer: ${state.order.customer.firstName || ""} ${state.order.customer.lastName || ""}\nPhone: ${state.order.customer.redactedPhone}\nOrder: ${state.order.name}\nUnavailable: ${state.unavailableItem.title}\nSubstitute: ${state.substituteItem.title}\nConsent: ${state.order.smsConsent.granted ? "SMS Opt-In" : "No SMS Consent"}\nSegments: ${estimate.segments} (${estimate.encoding})\n\n${els.message.value}`;
+      state.lastFocus = document.activeElement;
       els.modalBackdrop.classList.add("open");
       els.confirmSendButton.focus();
     }
 
     function closeConfirmModal() {
       els.modalBackdrop.classList.remove("open");
+      if (state.lastFocus) state.lastFocus.focus();
     }
 
     async function sendSms() {
@@ -1517,31 +1597,27 @@
       try {
         const response = await fetch("/api/send-substitution-sms", {
           method: "POST",
+          credentials: "same-origin",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            password: els.password.value,
-            phone: state.order.customer.phone,
-            firstName: state.order.customer.firstName,
-            orderName: state.order.name,
-            unavailableItem: state.unavailableItem.title,
-            substituteItem: state.substituteItem.title,
-            message: els.message.value
+            orderId: state.order.id,
+            lineItemId: state.unavailableItem.id,
+            substituteVariantId: state.substituteItem.id,
+            message: els.message.value,
+            idempotencyKey: idempotencyKey(),
+            authorizedResend: state.authorizedResend
           })
         });
         const result = await response.json();
-        if (!response.ok || !result.success) {
-          throw new Error(result.error || "SMS could not be sent.");
+        if (response.status === 409 && result.code === "DUPLICATE_MESSAGE") {
+          state.authorizedResend = true;
+          toast("error", result.error);
+          openConfirmModal();
+          return;
         }
-        const providerStatus = result.providerStatus || (result.dryRun ? "dry-run" : "sent");
-        addHistory({
-          key: duplicateKey(),
-          orderName: state.order.name,
-          phone: state.order.customer.redactedPhone,
-          providerStatus,
-          message: els.message.value,
-          createdAt: new Date().toISOString()
-        });
-        toast("success", result.message || `SMS processed: ${providerStatus}.`);
+        if (!response.ok || !result.success) throw new Error(result.error || "SMS could not be sent.");
+        toast("success", result.message || `SMS processed: ${result.providerStatus}.`);
+        await loadHistory();
       } catch (error) {
         toast("error", error.message || "Could not reach the SMS service.");
       } finally {
@@ -1550,35 +1626,28 @@
       }
     }
 
-    function readHistory() {
+    async function loadHistory() {
+      if (!state.authenticated) return renderHistory([]);
       try {
-        return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+        const result = await api("/api/message-history");
+        renderHistory(result.records || []);
       } catch (error) {
-        return [];
+        renderHistory([]);
       }
     }
 
-    function saveHistory() {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state.history.slice(0, 30)));
-      renderHistory();
-    }
-
-    function addHistory(item) {
-      state.history.unshift(item);
-      saveHistory();
-    }
-
-    function renderHistory() {
-      if (!state.history.length) {
-        els.historyList.innerHTML = `<div class="empty">Sent and dry-run message history will appear here on this device.</div>`;
+    function renderHistory(records) {
+      clear(els.historyList);
+      if (!records.length) {
+        els.historyList.append(el("div", "empty", "Persistent sent and dry-run message history will appear here."));
         return;
       }
-      els.historyList.innerHTML = state.history.map((item) => `
-        <div class="history-item">
-          <strong>${iconSafeText(item.orderName)} · ${iconSafeText(item.providerStatus)}</strong>
-          <span>${iconSafeText(new Date(item.createdAt).toLocaleString())} · ${iconSafeText(item.phone || "")}</span>
-        </div>
-      `).join("");
+      records.forEach((item) => {
+        const row = el("div", "history-item");
+        row.append(el("strong", "", `${item.orderName} · ${item.latestTwilioStatus || item.initialTwilioStatus}`));
+        row.append(el("span", "", `${new Date(item.createdAt).toLocaleString()} · ${item.customerPhoneRedacted || ""} · ${item.staffIdentity || ""}`));
+        els.historyList.append(row);
+      });
     }
 
     function scrollToHistory() {
@@ -1590,6 +1659,11 @@
       els.drawerBackdrop.classList.toggle("open", open);
     }
 
+    els.loginButton.addEventListener("click", login);
+    els.logoutButton.addEventListener("click", logout);
+    els.password.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") login();
+    });
     els.searchButton.addEventListener("click", searchOrder);
     els.orderQuery.addEventListener("keydown", (event) => {
       if (event.key === "Enter") searchOrder();
@@ -1599,7 +1673,10 @@
       if (event.key === "Enter") searchSubstitutions();
     });
     els.customSubButton.addEventListener("click", addCustomSubstitute);
-    els.message.addEventListener("input", updateMessageState);
+    els.message.addEventListener("input", () => {
+      state.authorizedResend = false;
+      updateMessageState();
+    });
     els.copyButton.addEventListener("click", copyMessage);
     els.sendButton.addEventListener("click", openConfirmModal);
     els.cancelSendButton.addEventListener("click", closeConfirmModal);
@@ -1607,13 +1684,22 @@
     els.modalBackdrop.addEventListener("click", (event) => {
       if (event.target === els.modalBackdrop) closeConfirmModal();
     });
-    els.templateButton.addEventListener("click", fillTemplate);
-    els.consentCheck.addEventListener("change", updateConsentBadge);
-    els.clearHistoryButton.addEventListener("click", () => {
-      state.history = [];
-      saveHistory();
-      toast("success", "Message history cleared on this device.");
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && els.modalBackdrop.classList.contains("open")) closeConfirmModal();
+      if (event.key === "Tab" && els.modalBackdrop.classList.contains("open")) {
+        const focusable = [els.cancelSendButton, els.confirmSendButton];
+        const index = focusable.indexOf(document.activeElement);
+        if (event.shiftKey && index === 0) {
+          event.preventDefault();
+          focusable[focusable.length - 1].focus();
+        } else if (!event.shiftKey && index === focusable.length - 1) {
+          event.preventDefault();
+          focusable[0].focus();
+        }
+      }
     });
+    els.templateButton.addEventListener("click", fillTemplate);
+    els.clearHistoryButton.addEventListener("click", () => toast("success", "History is persistent. Use storage admin tools to remove records."));
     els.historyShortcut.addEventListener("click", scrollToHistory);
     els.historyNav.addEventListener("click", () => {
       scrollToHistory();
@@ -1626,8 +1712,9 @@
     });
 
     setEmptyOrder();
-    renderHistory();
+    setAuth(false);
     updateMessageState();
+    checkSession();
   </script>
 </body>
 </html>

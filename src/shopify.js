@@ -1,7 +1,7 @@
 const { redactPhone } = require("./sms");
 
 const SHOP_DOMAIN = "welkom-usa.myshopify.com";
-const DEFAULT_API_VERSION = "2026-07";
+const DEFAULT_API_VERSION = "2025-10";
 
 function getConfig(env = process.env) {
   return {
@@ -26,6 +26,15 @@ function normalizeOrderQuery(query) {
   return clean.startsWith("#") ? clean.slice(1) : clean;
 }
 
+function expectedOrderName(query) {
+  const normalized = normalizeOrderQuery(query);
+  return normalized ? `#${normalized}` : "";
+}
+
+function escapeSearchTerm(value) {
+  return String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').trim();
+}
+
 function pickPhone(order) {
   return (
     order.phone ||
@@ -38,31 +47,63 @@ function pickPhone(order) {
 
 function money(value) {
   if (!value) return "";
-  const amount = Number(value.amount);
-  if (Number.isNaN(amount)) return "";
-  return `$${amount.toFixed(2)}`;
+  const amount = value.amount ?? value;
+  const numeric = Number(amount);
+  if (Number.isNaN(numeric)) return "";
+  const currency = value.currencyCode || "";
+  return currency ? `${currency} ${numeric.toFixed(2)}` : `$${numeric.toFixed(2)}`;
 }
 
-function simplifyProduct(product) {
-  const variant = product.variants?.nodes?.[0] || {};
+function consentFromAttributes(customAttributes = []) {
+  const found = customAttributes.find((attr) => String(attr.key || "").toLowerCase() === "sms consent");
+  const value = found?.value || "";
   return {
-    id: variant.id || product.id,
-    title: product.title,
-    variantTitle: variant.title && variant.title !== "Default Title" ? variant.title : "",
-    price: money(variant.price),
-    imageUrl: product.featuredImage?.url || "",
-    status: product.status
+    granted: String(value).toLowerCase() === "yes",
+    value
   };
+}
+
+function simplifyVariant(variant) {
+  if (!variant) return null;
+  const product = variant.product || {};
+  return {
+    id: variant.id,
+    productId: product.id || "",
+    title: product.title || variant.displayName || variant.title || "",
+    variantTitle: variant.title && variant.title !== "Default Title" ? variant.title : "",
+    sku: variant.sku || "",
+    barcode: variant.barcode || "",
+    price: money(variant.price),
+    imageUrl: variant.image?.url || product.featuredImage?.url || "",
+    inventoryQuantity: Number.isFinite(variant.inventoryQuantity) ? variant.inventoryQuantity : null,
+    availableForSale: Boolean(variant.availableForSale),
+    productStatus: product.status || "",
+    status: product.status || ""
+  };
+}
+
+function usableSubstitute(variant, excludedVariantId) {
+  const simplified = simplifyVariant(variant);
+  if (!simplified) return false;
+  if (simplified.id === excludedVariantId) return false;
+  if (simplified.productStatus !== "ACTIVE") return false;
+  if (!simplified.availableForSale) return false;
+  return true;
 }
 
 function simplifyOrder(order, substitutionProducts = []) {
   const phone = pickPhone(order);
+  const smsConsent = consentFromAttributes(order.customAttributes || []);
   return {
     id: order.id,
     name: order.name,
     processedAt: order.processedAt || "",
+    totalPrice: money(order.totalPriceSet?.shopMoney),
+    displayFinancialStatus: order.displayFinancialStatus || "",
     displayFulfillmentStatus: order.displayFulfillmentStatus || "",
     cancelled: Boolean(order.cancelledAt),
+    cancelledAt: order.cancelledAt || "",
+    smsConsent,
     customer: {
       firstName: order.customer?.firstName || "",
       lastName: order.customer?.lastName || "",
@@ -72,20 +113,32 @@ function simplifyOrder(order, substitutionProducts = []) {
     },
     shippingAddress: {
       name: order.shippingAddress?.name || "",
+      address1: order.shippingAddress?.address1 || "",
+      address2: order.shippingAddress?.address2 || "",
       city: order.shippingAddress?.city || "",
       province: order.shippingAddress?.province || "",
       country: order.shippingAddress?.country || "",
       zip: order.shippingAddress?.zip || ""
     },
-    lineItems: (order.lineItems?.nodes || []).map((item) => ({
-      id: item.id,
-      title: item.title,
-      variantTitle: item.variantTitle || "",
-      quantity: item.quantity,
-      imageUrl: item.image?.url || item.variant?.image?.url || "",
-      sku: item.sku || item.variant?.sku || "",
-      price: money(item.originalUnitPriceSet?.shopMoney)
-    })),
+    lineItems: (order.lineItems?.nodes || []).map((item) => {
+      const variant = item.variant || {};
+      const product = variant.product || {};
+      return {
+        id: item.id,
+        title: item.title,
+        variantTitle: item.variantTitle || variant.title || "",
+        quantity: item.quantity,
+        imageUrl: item.image?.url || variant.image?.url || product.featuredImage?.url || "",
+        sku: item.sku || variant.sku || "",
+        barcode: variant.barcode || "",
+        price: money(item.originalUnitPriceSet?.shopMoney),
+        variantId: variant.id || "",
+        productId: product.id || "",
+        productStatus: product.status || "",
+        inventoryQuantity: Number.isFinite(variant.inventoryQuantity) ? variant.inventoryQuantity : null,
+        availableForSale: Boolean(variant.availableForSale)
+      };
+    }),
     substitutionProducts
   };
 }
@@ -107,142 +160,223 @@ async function shopifyGraphql(query, variables, { env = process.env, fetchImpl =
   return { ok: true, json };
 }
 
+const ORDER_FIELDS = `
+  id
+  name
+  phone
+  processedAt
+  displayFinancialStatus
+  displayFulfillmentStatus
+  cancelledAt
+  customAttributes { key value }
+  totalPriceSet { shopMoney { amount currencyCode } }
+  customer {
+    firstName
+    lastName
+    email
+    phone
+  }
+  shippingAddress {
+    name
+    address1
+    address2
+    city
+    province
+    country
+    zip
+    phone
+  }
+  billingAddress { phone }
+  lineItems(first: 30) {
+    nodes {
+      id
+      title
+      variantTitle
+      quantity
+      sku
+      image { url }
+      variant {
+        id
+        title
+        sku
+        barcode
+        availableForSale
+        inventoryQuantity
+        image { url }
+        product {
+          id
+          title
+          status
+          featuredImage { url }
+        }
+      }
+      originalUnitPriceSet { shopMoney { amount currencyCode } }
+    }
+  }
+`;
+
 async function searchProductsForSubstitutions(searchText, options = {}) {
   const clean = String(searchText || "").trim();
   if (!clean) return [];
 
   const query = `
-    query SubstitutionProducts($query: String!) {
-      products(first: 8, query: $query) {
+    query SubstitutionVariants($query: String!) {
+      productVariants(first: 20, query: $query) {
         nodes {
           id
           title
-          status
-          featuredImage {
-            url
-          }
-          variants(first: 1) {
-            nodes {
-              id
-              title
-              price
-            }
+          displayName
+          sku
+          barcode
+          price
+          availableForSale
+          inventoryQuantity
+          image { url }
+          product {
+            id
+            title
+            status
+            featuredImage { url }
           }
         }
       }
     }
   `;
 
-  const firstWords = clean.split(/\s+/).slice(0, 5).join(" ");
+  const safe = escapeSearchTerm(clean).split(/\s+/).slice(0, 8).join(" ");
   const compact = clean.replace(/[^\w-]/g, "");
-  const productQuery = compact && compact.length === clean.length
-    ? `status:active (${firstWords} OR sku:${compact} OR barcode:${compact})`
-    : `status:active ${firstWords}`;
-  const result = await shopifyGraphql(query, { query: productQuery }, options);
+  const searchQuery = compact && compact.length === clean.length
+    ? `(sku:${compact} OR barcode:${compact} OR title:"${safe}")`
+    : `title:"${safe}"`;
+  const result = await shopifyGraphql(query, { query: searchQuery }, options);
   if (!result.ok) return [];
-  return (result.json.data?.products?.nodes || []).map(simplifyProduct);
+  return (result.json.data?.productVariants?.nodes || [])
+    .filter((variant) => usableSubstitute(variant, options.excludeVariantId))
+    .map(simplifyVariant)
+    .slice(0, options.limit || 12);
+}
+
+async function searchSubstitutionsForLineItem(lineItem, options = {}) {
+  if (!lineItem) return [];
+  const terms = [lineItem.title, lineItem.sku, lineItem.barcode].filter(Boolean).join(" ");
+  return searchProductsForSubstitutions(terms, {
+    ...options,
+    excludeVariantId: lineItem.variantId
+  });
 }
 
 async function findOrder(queryText, { env = process.env, fetchImpl = fetch } = {}) {
   if (!hasConfig(env)) {
-    return { status: 500, body: { success: false, error: "Shopify Admin API is not configured." } };
+    return { status: 500, body: { success: false, code: "SHOPIFY_ERROR", error: "Shopify Admin API is not configured." } };
   }
 
   const normalized = normalizeOrderQuery(queryText);
   if (!normalized) {
-    return { status: 400, body: { success: false, error: "Order number is required." } };
+    return { status: 400, body: { success: false, code: "INVALID_ORDER", error: "Order number is required." } };
   }
 
-  if (normalized.length > 80) {
-    return { status: 400, body: { success: false, error: "Order search is too long." } };
+  if (!/^[A-Za-z0-9-]+$/.test(normalized) || normalized.length > 80) {
+    return { status: 400, body: { success: false, code: "INVALID_ORDER", error: "Order search is invalid." } };
   }
 
   const query = `
     query SearchOrder($query: String!) {
       orders(first: 1, query: $query, sortKey: PROCESSED_AT, reverse: true) {
-        nodes {
+        nodes { ${ORDER_FIELDS} }
+      }
+    }
+  `;
+
+  const expected = expectedOrderName(normalized);
+  const result = await shopifyGraphql(query, { query: `name:${escapeSearchTerm(expected)}` }, { env, fetchImpl });
+  if (!result.ok) {
+    return { status: 502, body: { success: false, code: "SHOPIFY_ERROR", error: "Shopify order lookup failed." } };
+  }
+
+  const order = result.json.data?.orders?.nodes?.[0];
+  if (!order || order.name !== expected) {
+    return { status: 404, body: { success: false, code: "ORDER_NOT_FOUND", error: "No exact matching order found." } };
+  }
+
+  return {
+    status: 200,
+    body: {
+      success: true,
+      order: simplifyOrder(order)
+    }
+  };
+}
+
+async function getOrderById(orderId, { env = process.env, fetchImpl = fetch } = {}) {
+  if (!hasConfig(env)) {
+    return { status: 500, body: { success: false, code: "SHOPIFY_ERROR", error: "Shopify Admin API is not configured." } };
+  }
+
+  const query = `
+    query GetOrder($id: ID!) {
+      order(id: $id) { ${ORDER_FIELDS} }
+    }
+  `;
+
+  const result = await shopifyGraphql(query, { id: orderId }, { env, fetchImpl });
+  if (!result.ok) {
+    return { status: 502, body: { success: false, code: "SHOPIFY_ERROR", error: "Shopify order lookup failed." } };
+  }
+
+  const order = result.json.data?.order;
+  if (!order) {
+    return { status: 404, body: { success: false, code: "ORDER_NOT_FOUND", error: "Order was not found." } };
+  }
+
+  return { status: 200, body: { success: true, order: simplifyOrder(order) } };
+}
+
+async function getVariantById(variantId, { env = process.env, fetchImpl = fetch } = {}) {
+  const query = `
+    query GetVariant($id: ID!) {
+      productVariant(id: $id) {
+        id
+        title
+        displayName
+        sku
+        barcode
+        price
+        availableForSale
+        inventoryQuantity
+        image { url }
+        product {
           id
-          name
-          phone
-          processedAt
-          displayFulfillmentStatus
-          cancelledAt
-          customer {
-            firstName
-            lastName
-            email
-            phone
-          }
-          shippingAddress {
-            name
-            city
-            province
-            country
-            zip
-            phone
-          }
-          billingAddress {
-            phone
-          }
-          lineItems(first: 20) {
-            nodes {
-              id
-              title
-              variantTitle
-              quantity
-              sku
-              image {
-                url
-              }
-              variant {
-                sku
-                image {
-                  url
-                }
-              }
-              originalUnitPriceSet {
-                shopMoney {
-                  amount
-                  currencyCode
-                }
-              }
-            }
-          }
+          title
+          status
+          featuredImage { url }
         }
       }
     }
   `;
 
-  const result = await shopifyGraphql(
-    query,
-    { query: `name:${normalized}` },
-    { env, fetchImpl }
-  );
+  const result = await shopifyGraphql(query, { id: variantId }, { env, fetchImpl });
   if (!result.ok) {
-    return { status: 502, body: { success: false, error: "Shopify order lookup failed." } };
+    return { status: 502, body: { success: false, code: "SHOPIFY_ERROR", error: "Shopify product lookup failed." } };
   }
 
-  const order = result.json.data?.orders?.nodes?.[0];
-  if (!order) {
-    return { status: 404, body: { success: false, error: "No matching order found." } };
+  const variant = result.json.data?.productVariant;
+  if (!variant) {
+    return { status: 404, body: { success: false, code: "SUBSTITUTE_INVALID", error: "The substitute product was not found." } };
   }
 
-  const firstLineItem = order.lineItems?.nodes?.[0];
-  const substitutions = await searchProductsForSubstitutions(firstLineItem?.title, { env, fetchImpl });
-  return {
-    status: 200,
-    body: {
-      success: true,
-      order: simplifyOrder(order, substitutions)
-    }
-  };
+  return { status: 200, body: { success: true, product: simplifyVariant(variant) } };
 }
 
 module.exports = {
   SHOP_DOMAIN,
+  consentFromAttributes,
+  expectedOrderName,
   findOrder,
   getConfig,
+  getOrderById,
+  getVariantById,
   hasConfig,
   normalizeOrderQuery,
-  searchProductsForSubstitutions
+  searchProductsForSubstitutions,
+  searchSubstitutionsForLineItem
 };
