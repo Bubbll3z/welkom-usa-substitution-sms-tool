@@ -367,14 +367,30 @@ async function handleHistory(event) {
   const auth = requireSession(event);
   if (auth.error) return auth.error;
   const params = new URLSearchParams(event.rawQuery || "");
-  const result = await queryMessageRecords(process.env, {
-    page: params.get("page"),
-    limit: params.get("limit"),
-    query: params.get("query") || params.get("search"),
-    status: params.get("status"),
-    dryRun: params.get("dryRun")
-  });
-  return json(200, { success: true, ...result });
+  try {
+    const result = await queryMessageRecords(process.env, {
+      page: params.get("page"),
+      limit: params.get("limit"),
+      query: params.get("query") || params.get("search"),
+      status: params.get("status"),
+      dryRun: params.get("dryRun")
+    });
+    return json(200, { success: true, ...result });
+  } catch (storageError) {
+    console.error("Message history storage read error:", storageError.message);
+    const limit = Math.min(Math.max(Number(params.get("limit") || 25), 1), 100);
+    const page = Math.max(Number(params.get("page") || 1), 1);
+    return json(200, {
+      success: true,
+      records: [],
+      page,
+      limit,
+      total: 0,
+      totalPages: 1,
+      storageHealthy: false,
+      warning: "Message history storage is not available yet. Sent messages will appear after Blob storage is initialized and the first message is recorded."
+    });
+  }
 }
 
 async function handleDashboard(event) {

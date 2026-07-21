@@ -518,6 +518,34 @@ test("dashboard still loads when message history storage is unavailable", async 
   }
 });
 
+test("message history still loads empty when storage is unavailable", async () => {
+  const cookie = await loginCookie();
+  process.env.MESSAGE_STORAGE_PROVIDER = "netlify-blobs";
+  setStoreFactory(() => ({
+    async list() {
+      throw new Error("storage unavailable");
+    },
+    async get() {
+      throw new Error("storage unavailable");
+    },
+    async setJSON() {
+      throw new Error("storage unavailable");
+    }
+  }));
+  try {
+    const history = await handler(event("/api/message-history?limit=10", undefined, { cookie }, "GET"));
+    assert.equal(history.statusCode, 200);
+    const body = JSON.parse(history.body);
+    assert.equal(body.success, true);
+    assert.equal(body.records.length, 0);
+    assert.equal(body.storageHealthy, false);
+    assert.match(body.warning, /history storage/i);
+  } finally {
+    process.env.MESSAGE_STORAGE_PROVIDER = "memory";
+    resetStoreFactory();
+  }
+});
+
 test("template endpoint validates approved wording and supports archive", async () => {
   const cookie = await loginCookie();
 

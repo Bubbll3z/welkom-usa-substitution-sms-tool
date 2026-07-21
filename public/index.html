@@ -2152,9 +2152,12 @@
 
     function renderSentMessages(result) {
       clear(els.sentHistoryList);
+      if (result.warning) {
+        els.sentHistoryList.append(el("div", "notice warn", result.warning));
+      }
       const records = result.records || [];
       if (!records.length) {
-        els.sentHistoryList.append(el("div", "empty", "No messages matched this view."));
+        els.sentHistoryList.append(el("div", "empty", result.warning ? "No sent messages are available yet." : "No messages matched this view."));
       } else {
         records.forEach((record) => els.sentHistoryList.append(messageRecordRow(record)));
       }
