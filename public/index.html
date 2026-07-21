@@ -1571,6 +1571,7 @@
       els.password.disabled = authenticated;
       els.loginButton.disabled = authenticated;
       els.logoutButton.disabled = !authenticated;
+      els.sidebarLogoutButton.disabled = !authenticated;
       els.searchButton.disabled = !authenticated;
       els.subSearchButton.disabled = !authenticated;
       els.subSearchState.textContent = authenticated ? "Shopify suggestions" : "Log in first";
