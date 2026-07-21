@@ -22,6 +22,7 @@ const {
   archiveTemplate,
   backupPayload,
   createMessageRecord,
+  defaultTemplate,
   findByIdempotency,
   findDuplicate,
   getMessageRecord,
@@ -54,6 +55,12 @@ function json(statusCode, body, headers = {}) {
 
 function error(statusCode, code, message) {
   return json(statusCode, { success: false, code, error: message });
+}
+
+function safeErrorDetail(errorValue) {
+  const message = String(errorValue?.message || errorValue || "Unknown error.");
+  if (/token|secret|password|authorization|cookie/i.test(message)) return "A protected configuration value could not be used.";
+  return message.slice(0, 180);
 }
 
 function parseBody(event) {
@@ -438,6 +445,7 @@ function safeConfigStatus() {
     twilioSender: sender,
     storageProvider: process.env.MESSAGE_STORAGE_PROVIDER || (process.env.NETLIFY === "true" ? "netlify-blobs" : "memory"),
     storagePersistent: (process.env.MESSAGE_STORAGE_PROVIDER || (process.env.NETLIFY === "true" ? "netlify-blobs" : "memory")).toLowerCase() === "netlify-blobs",
+    blobInitEnabled: String(process.env.BLOB_INIT_ENABLED || "").toLowerCase() === "true",
     dryRun: String(process.env.SMS_DRY_RUN ?? process.env.DRY_RUN ?? "true").toLowerCase() !== "false",
     productionSendingEnabled: String(process.env.SMS_DRY_RUN ?? process.env.DRY_RUN ?? "true").toLowerCase() === "false",
     sessionDurationMinutes: Number(process.env.SESSION_DURATION_MINUTES || 480),
@@ -448,22 +456,45 @@ function safeConfigStatus() {
 
 async function handleInitializeBlobs(event) {
   if (String(process.env.BLOB_INIT_ENABLED || "").toLowerCase() !== "true") {
-    return error(404, "NOT_FOUND", "Not found.");
+    return error(403, "BLOB_INIT_DISABLED", "Blob initialization is disabled. Temporarily set BLOB_INIT_ENABLED=true in Netlify, run initialization from Settings, then set it back to false.");
   }
   const auth = requireSession(event);
   if (auth.error) return auth.error;
-  const result = await initializeDataStores();
-  return json(200, { success: true, ...result });
+  try {
+    const result = await initializeDataStores();
+    return json(200, { success: true, ...result });
+  } catch (storageError) {
+    console.error("Blob initialization error:", storageError.message);
+    return error(500, "STORAGE_ERROR", `Blob initialization failed: ${safeErrorDetail(storageError)}`);
+  }
 }
 
 async function handleTemplates(event) {
   const auth = requireSession(event);
   if (auth.error) return auth.error;
-  if (event.httpMethod === "GET") return json(200, { success: true, templates: await listTemplates() });
+  if (event.httpMethod === "GET") {
+    try {
+      return json(200, { success: true, templates: await listTemplates(), storageHealthy: true });
+    } catch (storageError) {
+      console.error("Template storage read error:", storageError.message);
+      return json(200, {
+        success: true,
+        templates: [defaultTemplate()],
+        storageHealthy: false,
+        warning: "Template storage is not available yet. The default template is shown temporarily. Use Settings to initialize Blob stores."
+      });
+    }
+  }
   if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
   const body = parseBody(event);
   if (!body) return error(400, "INVALID_REQUEST", "Request body must be valid JSON.");
-  const result = await saveTemplate(body);
+  let result;
+  try {
+    result = await saveTemplate(body);
+  } catch (storageError) {
+    console.error("Template save error:", storageError.message);
+    return error(500, "STORAGE_ERROR", `Template could not be saved: ${safeErrorDetail(storageError)}`);
+  }
   if (!result.ok) return error(400, result.code, result.error);
   return json(200, { success: true, template: result.template });
 }
@@ -472,7 +503,13 @@ async function handleTemplateArchive(event, route) {
   const auth = requireSession(event);
   if (auth.error) return auth.error;
   const id = decodeURIComponent(route.replace(/^templates\//, "").replace(/\/archive$/, ""));
-  const result = await archiveTemplate(id);
+  let result;
+  try {
+    result = await archiveTemplate(id);
+  } catch (storageError) {
+    console.error("Template archive error:", storageError.message);
+    return error(500, "STORAGE_ERROR", `Template could not be archived: ${safeErrorDetail(storageError)}`);
+  }
   if (!result.ok) return error(400, result.code, result.error);
   return json(200, { success: true, template: result.template });
 }

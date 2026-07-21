@@ -576,10 +576,69 @@ test("template endpoint validates approved wording and supports archive", async 
   assert.equal(JSON.parse(remaining.body).templates.some((item) => item.id === template.id), false);
 });
 
+test("template endpoint falls back safely when template storage is unavailable", async () => {
+  const cookie = await loginCookie();
+  process.env.MESSAGE_STORAGE_PROVIDER = "netlify-blobs";
+  setStoreFactory(() => ({
+    async list() {
+      throw new Error("template storage unavailable");
+    },
+    async get() {
+      throw new Error("template storage unavailable");
+    },
+    async setJSON() {
+      throw new Error("template storage unavailable");
+    }
+  }));
+  try {
+    const response = await handler(event("/api/templates", undefined, { cookie }, "GET"));
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.success, true);
+    assert.equal(body.storageHealthy, false);
+    assert.equal(body.templates.length, 1);
+    assert.match(body.warning, /default template/i);
+  } finally {
+    process.env.MESSAGE_STORAGE_PROVIDER = "memory";
+    resetStoreFactory();
+  }
+});
+
+test("template save returns safe storage errors without leaking secret-like details", async () => {
+  const cookie = await loginCookie();
+  process.env.MESSAGE_STORAGE_PROVIDER = "netlify-blobs";
+  setStoreFactory(() => ({
+    async list() {
+      return { blobs: [] };
+    },
+    async get() {
+      return null;
+    },
+    async setJSON() {
+      throw new Error("TWILIO_AUTH_TOKEN secret failed");
+    }
+  }));
+  try {
+    const response = await handler(event("/api/templates", {
+      name: "Default substitution",
+      body: "Welkom USA: Hi [FIRST NAME], [UNAVAILABLE ITEM] in order #[ORDER NUMBER] is unavailable. We can substitute it with [SUBSTITUTE ITEM]. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out."
+    }, { cookie }));
+    assert.equal(response.statusCode, 500);
+    const body = JSON.parse(response.body);
+    assert.equal(body.code, "STORAGE_ERROR");
+    assert.match(body.error, /protected configuration value/i);
+    assert.doesNotMatch(response.body, /TWILIO_AUTH_TOKEN|secret failed/);
+  } finally {
+    process.env.MESSAGE_STORAGE_PROVIDER = "memory";
+    resetStoreFactory();
+  }
+});
+
 test("blob initialization endpoint requires staff authentication and is idempotent", async () => {
   const cookie = await loginCookie();
   const disabled = await handler(event("/api/admin/init-blobs", {}, { cookie }, "POST"));
-  assert.equal(disabled.statusCode, 404);
+  assert.equal(disabled.statusCode, 403);
+  assert.equal(JSON.parse(disabled.body).code, "BLOB_INIT_DISABLED");
 
   process.env.BLOB_INIT_ENABLED = "true";
   const blocked = await handler(event("/api/admin/init-blobs", {}, {}, "POST"));

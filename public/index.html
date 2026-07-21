@@ -1276,7 +1276,12 @@
                 <button id="testConnectionsButton" class="btn-outline" type="button">Refresh Status</button>
               </div>
               <div id="settingsStatus" class="settings-grid"></div>
-              <p class="fine" style="margin-top:12px;">Secrets are configured in Netlify environment variables and local .env files only. They are never displayed here.</p>
+              <div class="message-actions" style="margin-top:14px;">
+                <button id="initializeBlobsButton" class="btn-primary" type="button">Initialize Blob Stores</button>
+                <button id="restoreTemplateButton" class="btn-outline" type="button">Restore Default Template</button>
+              </div>
+              <div id="settingsActionsStatus" class="notice hidden" style="margin-top:12px;"></div>
+              <p class="fine" style="margin-top:12px;">Secrets are configured in Netlify environment variables and local .env files only. Settings actions never display or change secret values.</p>
             </div>
           </article>
         </section>
@@ -1389,6 +1394,9 @@
       archiveTemplateButton: document.getElementById("archiveTemplateButton"),
       settingsStatus: document.getElementById("settingsStatus"),
       testConnectionsButton: document.getElementById("testConnectionsButton"),
+      initializeBlobsButton: document.getElementById("initializeBlobsButton"),
+      restoreTemplateButton: document.getElementById("restoreTemplateButton"),
+      settingsActionsStatus: document.getElementById("settingsActionsStatus"),
       backupInfo: document.getElementById("backupInfo"),
       exportJsonButton: document.getElementById("exportJsonButton"),
       exportCsvButton: document.getElementById("exportCsvButton")
@@ -2110,6 +2118,7 @@
         ["Production sending", status.productionSendingEnabled ? "Enabled" : "Blocked", statusBadge(status.productionSendingEnabled, "Enabled", "Blocked")],
         ["Storage", `${status.storageProvider || "-"}${status.storagePersistent ? " persistent" : " memory"}`],
         ["Storage health", status.storageHealthy === false ? "Needs first write" : "Available", statusBadge(status.storageHealthy !== false, "Available", "Needs init")],
+        ["Blob init action", status.blobInitEnabled ? "Enabled" : "Disabled", statusBadge(status.blobInitEnabled, "Enabled", "Disabled")],
         ["SMS consent required", status.consentEnforced ? "Yes" : "No", statusBadge(status.consentEnforced, "Required", "Disabled")],
         ["Cloudflare required", status.cloudflareRequired ? "Yes" : "No"]
       ]);
@@ -2173,11 +2182,13 @@
       try {
         const result = await api("/api/templates");
         state.templates = result.templates || [];
+        if (result.warning) toast("error", result.warning);
         renderTemplates();
         if (!state.selectedTemplate && state.templates[0]) selectTemplate(state.templates[0]);
       } catch (error) {
         clear(els.templateList);
-        els.templateList.append(el("div", "notice error", error.message));
+        els.templateList.append(el("div", "notice error", `${error.message}${error.code ? ` (${error.code})` : ""}`));
+        els.templateList.append(el("div", "notice warn", "Open Settings and use Initialize Blob Stores. If that says initialization is disabled, temporarily set BLOB_INIT_ENABLED=true in Netlify and redeploy."));
       }
     }
 
@@ -2260,14 +2271,68 @@
     async function loadSettings() {
       if (!state.authenticated) {
         renderStatusGrid(els.settingsStatus, [["Session", "Log in first", statusBadge(false, "Active", "Logged out")]]);
+        els.initializeBlobsButton.disabled = true;
+        els.restoreTemplateButton.disabled = true;
         return;
       }
+      els.initializeBlobsButton.disabled = false;
+      els.restoreTemplateButton.disabled = false;
       try {
         const result = await api("/api/dashboard");
         renderSafeStatus(els.settingsStatus, result.status || {});
+        if (result.warning) setSettingsActionStatus("warn", result.warning);
       } catch (error) {
         clear(els.settingsStatus);
-        els.settingsStatus.append(el("div", "notice error", error.message));
+        els.settingsStatus.append(el("div", "notice error", `${error.message}${error.code ? ` (${error.code})` : ""}`));
+        setSettingsActionStatus("error", "Status could not be loaded. Check that you are logged in, then try Initialize Blob Stores if storage is the failing area.");
+      }
+    }
+
+    function setSettingsActionStatus(type, message) {
+      els.settingsActionsStatus.className = `notice ${type === "error" ? "error" : type === "warn" ? "warn" : ""}`.trim();
+      els.settingsActionsStatus.textContent = message;
+      els.settingsActionsStatus.classList.remove("hidden");
+    }
+
+    async function initializeBlobStores() {
+      if (!state.authenticated) return toast("error", "Please log in first.");
+      els.initializeBlobsButton.disabled = true;
+      setSettingsActionStatus("warn", "Initializing Blob stores...");
+      try {
+        const result = await api("/api/admin/init-blobs", { method: "POST" });
+        setSettingsActionStatus("success", `Blob stores checked: ${Object.values(result.stores || {}).join(", ")}.`);
+        await loadSettings();
+        await loadTemplates();
+      } catch (error) {
+        const guidance = error.code === "BLOB_INIT_DISABLED"
+          ? "Blob initialization is disabled. Temporarily set BLOB_INIT_ENABLED=true in Netlify environment variables, redeploy, then click this button again. Set it back to false afterwards."
+          : `${error.message}${error.code ? ` (${error.code})` : ""}`;
+        setSettingsActionStatus("error", guidance);
+      } finally {
+        els.initializeBlobsButton.disabled = false;
+      }
+    }
+
+    async function restoreDefaultTemplate() {
+      if (!state.authenticated) return toast("error", "Please log in first.");
+      els.restoreTemplateButton.disabled = true;
+      setSettingsActionStatus("warn", "Restoring the default substitution template...");
+      try {
+        await api("/api/templates", {
+          method: "POST",
+          body: JSON.stringify({
+            id: "default-substitution",
+            name: "Default substitution",
+            body: TEMPLATE,
+            isDefault: true
+          })
+        });
+        setSettingsActionStatus("success", "Default template is saved.");
+        await loadTemplates();
+      } catch (error) {
+        setSettingsActionStatus("error", `${error.message}${error.code ? ` (${error.code})` : ""}`);
+      } finally {
+        els.restoreTemplateButton.disabled = false;
       }
     }
 
@@ -2410,6 +2475,8 @@
     els.duplicateTemplateButton.addEventListener("click", duplicateTemplate);
     els.archiveTemplateButton.addEventListener("click", archiveSelectedTemplate);
     els.testConnectionsButton.addEventListener("click", loadSettings);
+    els.initializeBlobsButton.addEventListener("click", initializeBlobStores);
+    els.restoreTemplateButton.addEventListener("click", restoreDefaultTemplate);
     els.exportJsonButton.addEventListener("click", () => exportBackup("json"));
     els.exportCsvButton.addEventListener("click", () => exportBackup("csv"));
     els.sidebarLogoutButton.addEventListener("click", () => {
