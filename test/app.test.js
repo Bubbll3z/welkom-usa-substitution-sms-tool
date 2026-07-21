@@ -329,6 +329,22 @@ test("manual product search reports missing Shopify configuration", async () => 
   assert.equal(body.code, "SHOPIFY_ERROR");
 });
 
+test("manual product search can exclude the selected order variant", async () => {
+  const cookie = await loginCookie();
+  const originalFetch = global.fetch;
+  global.fetch = mockFetch({ variant: variantNode({ id: "gid://shopify/ProductVariant/old" }) });
+  try {
+    const response = await handler(event("/api/product-search", {
+      query: "Crunchie",
+      excludeVariantId: "gid://shopify/ProductVariant/old"
+    }, { cookie }));
+    assert.equal(response.statusCode, 200);
+    assert.equal(JSON.parse(response.body).products.length, 0);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("send revalidates order consent, line item, substitute inventory, duplicate and idempotency", async () => {
   const cookie = await loginCookie();
   const originalFetch = global.fetch;

@@ -1083,7 +1083,10 @@
 
             <article class="card">
               <div class="card-pad">
-                <h2 class="warning-title">Unavailable Item</h2>
+                <div class="card-title">
+                  <h2>Item to Replace</h2>
+                  <span class="fine">Staff selected</span>
+                </div>
                 <div id="lineItems" class="item-list"></div>
               </div>
             </article>
@@ -1119,7 +1122,7 @@
               <div class="message-header">
                 <div>
                   <h2><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>Substitution Message</h2>
-                  <p id="messageHelp" class="supporting">Select an order, unavailable item and substitute item.</p>
+                  <p id="messageHelp" class="supporting">Select an order item to replace and a substitute item.</p>
                 </div>
                 <button id="templateButton" class="btn-outline" type="button">Use Template v</button>
               </div>
@@ -1693,7 +1696,7 @@
       if (state.order?.cancelled) missing.push("order is not cancelled");
       if (!state.order?.customer?.redactedPhone) missing.push("a customer phone number exists");
       if (!state.order?.smsConsent?.granted) missing.push("SMS consent is recorded on Shopify");
-      if (!state.unavailableItem) missing.push("an unavailable item is selected");
+      if (!state.unavailableItem) missing.push("an order item to replace is selected");
       if (!state.substituteItem) missing.push("a substitute item is selected");
       if (state.substituteItem && state.substituteItem.availableForSale === false) missing.push("substitute is available");
       if (Number.isFinite(state.substituteItem?.inventoryQuantity) && state.substituteItem.inventoryQuantity <= 0) missing.push("substitute has inventory");
@@ -1716,7 +1719,7 @@
       els.copyButton.disabled = !els.message.value.trim();
       els.sendReadiness.className = missing.length ? "notice warn" : "notice";
       els.sendReadiness.textContent = missing.length ? `Before sending, confirm: ${missing.join(", ")}.` : "Ready to send after final confirmation.";
-      els.messageHelp.textContent = state.order?.customer?.redactedPhone ? `This message will be sent to ${state.order.customer.redactedPhone}` : "Select an order, unavailable item and substitute item.";
+      els.messageHelp.textContent = state.order?.customer?.redactedPhone ? `This message will be sent to ${state.order.customer.redactedPhone}` : "Select an order item to replace and a substitute item.";
     }
 
     function setEmptyOrder() {
@@ -1725,7 +1728,7 @@
       clear(els.lineItems);
       els.lineItems.append(el("div", "empty", "Search an order first."));
       clear(els.substitutions);
-      els.substitutions.append(el("div", "empty", "Select an unavailable item to review substitution options."));
+      els.substitutions.append(el("div", "empty", "Select an order item to review substitution options."));
       updateConsentBadge();
     }
 
@@ -1754,7 +1757,7 @@
       ]);
       renderLineItems(order.lineItems || []);
       clear(els.substitutions);
-      els.substitutions.append(el("div", "empty", "Select an unavailable item to load Shopify substitution suggestions."));
+      els.substitutions.append(el("div", "empty", "Select an order item to load Shopify substitution suggestions."));
       updateConsentBadge();
       updateMessageState();
       if (order.cancelled) toast("error", "This order is cancelled, so messaging is disabled.");
@@ -1882,7 +1885,7 @@
       try {
         const result = await api("/api/product-search", {
           method: "POST",
-          body: JSON.stringify({ query })
+          body: JSON.stringify({ query, excludeVariantId: state.unavailableItem?.variantId || "" })
         });
         renderSubstitutions(result.products || []);
         els.subSearchState.textContent = `${(result.products || []).length} result${(result.products || []).length === 1 ? "" : "s"}`;
@@ -1897,7 +1900,7 @@
 
     function addCustomSubstitute() {
       if (!state.order || !state.unavailableItem) {
-        toast("error", "Load an order and select the unavailable item first.");
+        toast("error", "Load an order and select the item to replace first.");
         return;
       }
       const typed = window.prompt("Type the substitute item name exactly as staff want it shown in the SMS:", els.subSearch.value.trim());
@@ -2350,7 +2353,7 @@
     els.templateButton.addEventListener("click", () => {
       const missing = [];
       if (!state.order) missing.push("load an order");
-      if (!state.unavailableItem) missing.push("select the unavailable item");
+      if (!state.unavailableItem) missing.push("select the item to replace");
       if (!state.substituteItem) missing.push("select a substitute item");
       if (missing.length) {
         toast("error", `To use the template, first ${missing.join(", ")}.`);
