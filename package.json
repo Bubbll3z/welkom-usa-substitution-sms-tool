@@ -5,7 +5,11 @@
   "scripts": {
     "test": "node --test",
     "dev": "node scripts/dev-server.js",
-    "build": "node scripts/build-check.js"
+    "build": "node scripts/build-check.js",
+    "lint": "node --check netlify/functions/api.js && node --check src/auth.js && node --check src/data-store.js && node --check src/history.js && node --check src/shopify.js && node --check src/sms.js && node --check scripts/dev-server.js",
+    "format": "node scripts/build-check.js",
+    "typecheck": "node --check src/data-store.js",
+    "credential-scan": "node scripts/credential-scan.js"
   },
   "dependencies": {
     "@netlify/blobs": "^10.1.0",

@@ -185,6 +185,7 @@ test.beforeEach(() => {
   process.env.SHOPIFY_API_VERSION = "2025-10";
   delete process.env.SHOPIFY_CLIENT_ID;
   delete process.env.SHOPIFY_CLIENT_SECRET;
+  delete process.env.BLOB_INIT_ENABLED;
 });
 
 test("authentication supports login, session, logout, wrong password, and expired session", async () => {
@@ -499,6 +500,26 @@ test("template endpoint validates approved wording and supports archive", async 
 
   const remaining = await handler(event("/api/templates", undefined, { cookie }, "GET"));
   assert.equal(JSON.parse(remaining.body).templates.some((item) => item.id === template.id), false);
+});
+
+test("blob initialization endpoint requires staff authentication and is idempotent", async () => {
+  const cookie = await loginCookie();
+  const disabled = await handler(event("/api/admin/init-blobs", {}, { cookie }, "POST"));
+  assert.equal(disabled.statusCode, 404);
+
+  process.env.BLOB_INIT_ENABLED = "true";
+  const blocked = await handler(event("/api/admin/init-blobs", {}, {}, "POST"));
+  assert.equal(blocked.statusCode, 401);
+
+  const first = await handler(event("/api/admin/init-blobs", {}, { cookie }, "POST"));
+  assert.equal(first.statusCode, 200);
+  const firstBody = JSON.parse(first.body);
+  assert.equal(firstBody.success, true);
+  assert.equal(firstBody.stores.history, "welkom-sms-history");
+
+  const second = await handler(event("/api/admin/init-blobs", {}, { cookie }, "POST"));
+  assert.equal(second.statusCode, 200);
+  assert.equal(JSON.parse(second.body).success, true);
 });
 
 test("Twilio status callback validates signatures", async () => {

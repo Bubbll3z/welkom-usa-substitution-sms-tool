@@ -25,6 +25,7 @@ const {
   findByIdempotency,
   findDuplicate,
   getMessageRecord,
+  initializeDataStores,
   listTemplates,
   listMessageRecords,
   messageStats,
@@ -325,6 +326,7 @@ async function handleSendSubstitutionSms(event) {
     dryRun: undefined,
     idempotencyKey
   });
+  if (!created.ok) return error(500, created.code || "STORAGE_ERROR", created.error || "Message history could not be saved.");
 
   if (created.idempotent) {
     return json(200, { success: true, idempotent: true, message: "This request was already processed.", record: publicRecord(created.record) });
@@ -337,12 +339,14 @@ async function handleSendSubstitutionSms(event) {
     recordId: created.record.id
   });
 
-  created.record.dryRun = smsResult.body.dryRun;
-  created.record.twilioMessageSid = smsResult.body.sid || "";
-  created.record.initialTwilioStatus = smsResult.body.providerStatus || "failed";
-  created.record.latestTwilioStatus = smsResult.body.providerStatus || "failed";
-  created.record.failureReason = smsResult.body.success ? "" : smsResult.body.error;
-  await saveRecord(created.record);
+  const updatedRecord = await saveRecord({
+    ...created.record,
+    dryRun: smsResult.body.dryRun,
+    twilioMessageSid: smsResult.body.sid || "",
+    initialTwilioStatus: smsResult.body.providerStatus || "failed",
+    latestTwilioStatus: smsResult.body.providerStatus || "failed",
+    failureReason: smsResult.body.success ? "" : smsResult.body.error
+  });
 
   if (smsResult.log) {
     console.error("Twilio send error:", smsResult.log);
@@ -354,7 +358,7 @@ async function handleSendSubstitutionSms(event) {
     staffIdentity: auth.session.staffName
   });
 
-  return json(smsResult.status, { ...smsResult.body, record: publicRecord(created.record) });
+  return json(smsResult.status, { ...smsResult.body, record: publicRecord(updatedRecord || created.record) });
 }
 
 async function handleHistory(event) {
@@ -364,7 +368,7 @@ async function handleHistory(event) {
   const result = await queryMessageRecords(process.env, {
     page: params.get("page"),
     limit: params.get("limit"),
-    query: params.get("query"),
+    query: params.get("query") || params.get("search"),
     status: params.get("status"),
     dryRun: params.get("dryRun")
   });
@@ -394,13 +398,23 @@ function safeConfigStatus() {
     twilioConfigured: Boolean(process.env.TWILIO_ACCOUNT_SID && (process.env.TWILIO_AUTH_TOKEN || (process.env.TWILIO_API_KEY_SID && process.env.TWILIO_API_KEY_SECRET)) && (process.env.TWILIO_MESSAGING_SERVICE_SID || process.env.TWILIO_FROM_NUMBER || process.env.TWILIO_PHONE_NUMBER)),
     twilioSender: sender,
     storageProvider: process.env.MESSAGE_STORAGE_PROVIDER || (process.env.NETLIFY === "true" ? "netlify-blobs" : "memory"),
-    storagePersistent: (process.env.MESSAGE_STORAGE_PROVIDER || "").toLowerCase() === "netlify-blobs",
+    storagePersistent: (process.env.MESSAGE_STORAGE_PROVIDER || (process.env.NETLIFY === "true" ? "netlify-blobs" : "memory")).toLowerCase() === "netlify-blobs",
     dryRun: String(process.env.SMS_DRY_RUN ?? process.env.DRY_RUN ?? "true").toLowerCase() !== "false",
     productionSendingEnabled: String(process.env.SMS_DRY_RUN ?? process.env.DRY_RUN ?? "true").toLowerCase() === "false",
     sessionDurationMinutes: Number(process.env.SESSION_DURATION_MINUTES || 480),
     consentEnforced: true,
     cloudflareRequired: false
   };
+}
+
+async function handleInitializeBlobs(event) {
+  if (String(process.env.BLOB_INIT_ENABLED || "").toLowerCase() !== "true") {
+    return error(404, "NOT_FOUND", "Not found.");
+  }
+  const auth = requireSession(event);
+  if (auth.error) return auth.error;
+  const result = await initializeDataStores();
+  return json(200, { success: true, ...result });
 }
 
 async function handleTemplates(event) {
@@ -489,6 +503,7 @@ exports.handler = async (event) => {
 
   if (route === "login") return handleLogin(event);
   if (route === "logout") return handleLogout(event);
+  if (route === "admin/init-blobs") return handleInitializeBlobs(event);
   if (route === "templates") return handleTemplates(event);
   if (/^templates\/.+\/archive$/.test(route)) return handleTemplateArchive(event, route);
   if (route === "order-search") return handleOrderSearch(event);

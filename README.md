@@ -87,8 +87,7 @@ TWILIO_MESSAGING_SERVICE_SID=
 TWILIO_STATUS_CALLBACK_BASE_URL=
 
 MESSAGE_STORAGE_PROVIDER=netlify-blobs
-NETLIFY_BLOBS_SITE_ID=
-NETLIFY_BLOBS_TOKEN=
+BLOB_INIT_ENABLED=true
 ```
 
 `SESSION_SECRET` must be at least 32 random characters. For new Shopify Dev Dashboard apps, set `SHOPIFY_CLIENT_ID` and `SHOPIFY_CLIENT_SECRET`; the app automatically requests and refreshes the 24-hour Admin API token server-side. `SHOPIFY_ADMIN_ACCESS_TOKEN` is only a fallback for older apps where Shopify directly provided a token. Use either Twilio Auth Token auth or API Key auth. Use either a Twilio sender phone number/from number or a Messaging Service SID.
@@ -110,10 +109,10 @@ NETLIFY_BLOBS_TOKEN=
    - optional `TWILIO_MESSAGING_SERVICE_SID` if sending through a messaging service
 6. Set storage for production:
    - `MESSAGE_STORAGE_PROVIDER=netlify-blobs`
-   - `NETLIFY_BLOBS_SITE_ID`
-   - `NETLIFY_BLOBS_TOKEN`
-7. Keep both `DRY_RUN=true` and `SMS_DRY_RUN=true` for the first deployed test.
-8. After the dry-run test passes, change both dry-run variables to `false` only when a manager approves one live test to a company-controlled phone.
+   - `BLOB_INIT_ENABLED=true` for the first authenticated initialization, then set it to `false`
+7. Do not add `NETLIFY_SITE_ID`, `NETLIFY_AUTH_TOKEN`, `NETLIFY_BLOBS_SITE_ID`, or `NETLIFY_BLOBS_TOKEN` for normal deployed Functions. Netlify supplies credentials automatically to `getStore("store-name")`.
+8. Keep both `DRY_RUN=true` and `SMS_DRY_RUN=true` for the first deployed test.
+9. After the dry-run test passes, change both dry-run variables to `false` only when a manager approves one live test to a company-controlled phone.
 
 No Cloudflare secret is required for this app unless you later choose to move hosting away from Netlify.
 
@@ -167,14 +166,13 @@ https://your-netlify-site.netlify.app/api/twilio-status
 
 The callback validates Twilio signatures using `TWILIO_AUTH_TOKEN` before updating message status.
 
-## Message History Storage
+## Netlify Blobs Storage
 
 For production, set:
 
 ```env
 MESSAGE_STORAGE_PROVIDER=netlify-blobs
-NETLIFY_BLOBS_SITE_ID=
-NETLIFY_BLOBS_TOKEN=
+BLOB_INIT_ENABLED=true
 ```
 
 For local development and tests, use:
@@ -185,6 +183,42 @@ MESSAGE_STORAGE_PROVIDER=memory
 
 Memory storage is not persistent and should not be used for production.
 
+The app uses these site-wide Netlify Blob stores:
+
+```text
+welkom-sms-history
+welkom-sms-templates
+welkom-sms-audit
+welkom-sms-settings
+```
+
+These stores are created automatically by Netlify after the first successful write. There is no separate Blob ID to create. In deployed Netlify Functions the app uses automatic credentials with `getStore("store-name")`.
+
+Only safe operational data is stored in Blobs:
+
+- redacted SMS and dry-run history
+- template records
+- audit records
+- non-secret settings
+
+Never store Shopify access tokens, Twilio Auth Tokens, staff passwords, session secrets, cookies, authorization headers, complete customer addresses, or unredacted customer phone numbers in Blobs.
+
+### First Blob Write
+
+After deploying with `MESSAGE_STORAGE_PROVIDER=netlify-blobs` and `BLOB_INIT_ENABLED=true`:
+
+1. Log in to the app with the staff password.
+2. In the browser console or an authenticated REST client, send:
+
+```js
+fetch("/api/admin/init-blobs", { method: "POST", credentials: "same-origin" }).then((r) => r.json())
+```
+
+3. Confirm the response includes the four store names.
+4. Set `BLOB_INIT_ENABLED=false` in Netlify environment variables and redeploy.
+
+The initialization endpoint is authenticated, idempotent, creates the default substitution template only when templates are empty, and does not overwrite existing data.
+
 ## Tests and Verification
 
 ```bash
@@ -192,6 +226,12 @@ npm ci
 npm test
 npm run build
 npm audit --omit=dev
+```
+
+Credential scan before commit:
+
+```bash
+node scripts/credential-scan.js
 ```
 
 Manual checks before real SMS:
@@ -206,6 +246,18 @@ Manual checks before real SMS:
 8. Run a dry-run send.
 9. Confirm duplicate warning appears on a repeated substitution.
 10. Confirm message history records the dry run.
+
+## Production Readiness Checklist
+
+- `.env` is ignored by Git and real secrets are only in Netlify environment variables.
+- `MESSAGE_STORAGE_PROVIDER=netlify-blobs` is set in Netlify.
+- `BLOB_INIT_ENABLED=true` is used only for the first authenticated Blob initialization.
+- `/api/admin/init-blobs` has been called once while logged in.
+- `BLOB_INIT_ENABLED=false` is set after initialization.
+- The four Blob stores appear in Netlify after first writes.
+- Dry-run sends persist in Sent Messages across redeploys.
+- Duplicate-send protection works after a redeploy.
+- `DRY_RUN` and `SMS_DRY_RUN` stay `true` until a manager approves one company-controlled live SMS test.
 
 ## Real SMS Rule
 
