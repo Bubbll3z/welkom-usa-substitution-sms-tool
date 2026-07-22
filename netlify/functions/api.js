@@ -4,6 +4,7 @@ const crypto = require("node:crypto");
 const { connectLambda } = require("@netlify/blobs");
 
 const {
+  authRequired,
   checkStaffPassword,
   clearSessionCookie,
   cookieForSession,
@@ -89,8 +90,10 @@ function safeConfigDiagnostics(event) {
   const checks = [];
   const add = (name, ok, guidance) => checks.push({ name, ok: Boolean(ok), guidance: ok ? "" : guidance });
   const storageProvider = process.env.MESSAGE_STORAGE_PROVIDER || (process.env.NETLIFY === "true" ? "netlify-blobs" : "memory");
-  add("STAFF_PASSWORD", Boolean(process.env.STAFF_PASSWORD), "Add STAFF_PASSWORD in Netlify environment variables.");
-  add("SESSION_SECRET", String(process.env.SESSION_SECRET || "").length >= 32, "Add SESSION_SECRET with at least 32 random characters.");
+  const loginRequired = authRequired();
+  add("REQUIRE_LOGIN", !loginRequired || Boolean(process.env.STAFF_PASSWORD), "Set STAFF_PASSWORD, or set REQUIRE_LOGIN=false for temporary staff testing.");
+  add("STAFF_PASSWORD", !loginRequired || Boolean(process.env.STAFF_PASSWORD), "Add STAFF_PASSWORD in Netlify environment variables.");
+  add("SESSION_SECRET", !loginRequired || String(process.env.SESSION_SECRET || "").length >= 32, "Add SESSION_SECRET with at least 32 random characters.");
   add("SHOPIFY_SHOP_DOMAIN", Boolean(process.env.SHOPIFY_SHOP_DOMAIN), "Add SHOPIFY_SHOP_DOMAIN, for example welkom-usa.myshopify.com.");
   add("Shopify credentials", hasConfig(), "Add SHOPIFY_ADMIN_ACCESS_TOKEN or SHOPIFY_CLIENT_ID plus SHOPIFY_CLIENT_SECRET.");
   add("TWILIO_ACCOUNT_SID", /^AC[a-fA-F0-9]{32}$/.test(String(process.env.TWILIO_ACCOUNT_SID || "")), "Add a valid TWILIO_ACCOUNT_SID starting with AC.");
@@ -158,6 +161,14 @@ function requireSession(event) {
 }
 
 async function handleLogin(event) {
+  if (!authRequired()) {
+    return json(200, {
+      success: true,
+      staffName: process.env.STAFF_NAME || "Welkom USA Staff",
+      expiresAt: new Date(Date.now() + Number(process.env.SESSION_DURATION_MINUTES || 480) * 60 * 1000).toISOString(),
+      authRequired: false
+    });
+  }
   if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
   const limited = rateLimitLogin(event);
   if (!limited.ok) return error(limited.status, limited.code, limited.error);
@@ -188,7 +199,12 @@ async function handleLogout() {
 async function handleSession(event) {
   const auth = requireSession(event);
   if (auth.error) return auth.error;
-  return json(200, { success: true, staffName: auth.session.staffName, expiresAt: new Date(auth.session.payload.exp).toISOString() });
+  return json(200, {
+    success: true,
+    staffName: auth.session.staffName,
+    expiresAt: new Date(auth.session.payload.exp).toISOString(),
+    authRequired: authRequired()
+  });
 }
 
 async function handleOrderSearch(event) {
@@ -596,6 +612,7 @@ function safeConfigStatus() {
     dryRun: String(process.env.SMS_DRY_RUN ?? process.env.DRY_RUN ?? "true").toLowerCase() !== "false",
     productionSendingEnabled: String(process.env.SMS_DRY_RUN ?? process.env.DRY_RUN ?? "true").toLowerCase() === "false",
     sessionDurationMinutes: Number(process.env.SESSION_DURATION_MINUTES || 480),
+    authRequired: authRequired(),
     consentEnforced: true,
     cloudflareRequired: false
   };

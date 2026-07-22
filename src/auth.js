@@ -29,6 +29,10 @@ function sessionConfigured(env = process.env) {
   return secret.length >= 32;
 }
 
+function authRequired(env = process.env) {
+  return String(env.REQUIRE_LOGIN ?? "true").toLowerCase() !== "false";
+}
+
 function checkStaffPassword(password, env = process.env) {
   if (!passwordConfigured(env)) {
     return { ok: false, status: 500, code: "AUTH_REQUIRED", error: "Staff password is not configured." };
@@ -99,6 +103,19 @@ function verifySession(token, env = process.env, now = Date.now()) {
 }
 
 function getSessionFromEvent(event, env = process.env) {
+  if (!authRequired(env)) {
+    const now = Date.now();
+    return {
+      ok: true,
+      staffName: env.STAFF_NAME || "Welkom USA Staff",
+      payload: {
+        staffName: env.STAFF_NAME || "Welkom USA Staff",
+        iat: now,
+        exp: now + sessionDurationMs(env),
+        authBypassed: true
+      }
+    };
+  }
   const cookies = parseCookies(event.headers?.cookie || event.headers?.Cookie || "");
   return verifySession(cookies.welkom_sms_session, env);
 }
@@ -145,6 +162,7 @@ function resetLoginAttempts(event) {
 }
 
 module.exports = {
+  authRequired,
   checkStaffPassword,
   clearSessionCookie,
   cookieForSession,

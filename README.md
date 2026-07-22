@@ -65,6 +65,7 @@ Set these in Netlify environment variables, not in source code:
 ```env
 STAFF_PASSWORD=
 STAFF_NAME=Welkom USA Staff
+REQUIRE_LOGIN=true
 SESSION_SECRET=
 SESSION_DURATION_MINUTES=480
 DRY_RUN=true
@@ -91,6 +92,8 @@ BLOB_INIT_ENABLED=true
 ```
 
 `SESSION_SECRET` must be at least 32 random characters. For new Shopify Dev Dashboard apps, set `SHOPIFY_CLIENT_ID` and `SHOPIFY_CLIENT_SECRET`; the app automatically requests and refreshes the 24-hour Admin API token server-side. `SHOPIFY_ADMIN_ACCESS_TOKEN` is only a fallback for older apps where Shopify directly provided a token. Use either Twilio Auth Token auth or API Key auth. Use either a Twilio sender phone number/from number or a Messaging Service SID.
+
+For temporary internal testing only, set `REQUIRE_LOGIN=false` to hide the staff password screen and allow the app to open directly. Set it back to `true` before wider staff use.
 
 ## Production Secret Checklist
 

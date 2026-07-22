@@ -1107,11 +1107,11 @@
                   <h2>Search Order</h2>
                   <span id="searchState" class="fine">Ready</span>
                 </div>
-                <div class="field">
+                <div id="loginPasswordField" class="field">
                   <label for="password">Staff password</label>
                   <input id="password" type="password" autocomplete="current-password">
                 </div>
-                <div class="search-row" style="margin-bottom:12px;">
+                <div id="loginActions" class="search-row" style="margin-bottom:12px;">
                   <button id="loginButton" class="btn-outline" type="button">Log In</button>
                   <button id="logoutButton" class="btn-outline" type="button">Logout</button>
                 </div>
@@ -1439,6 +1439,8 @@
       templatesPage: document.getElementById("templatesPage"),
       settingsPage: document.getElementById("settingsPage"),
       backupPage: document.getElementById("backupPage"),
+      loginPasswordField: document.getElementById("loginPasswordField"),
+      loginActions: document.getElementById("loginActions"),
       password: document.getElementById("password"),
       loginButton: document.getElementById("loginButton"),
       logoutButton: document.getElementById("logoutButton"),
@@ -1528,6 +1530,7 @@
       unavailableItem: null,
       substituteItem: null,
       manualMode: false,
+      authRequired: true,
       authorizedResend: false,
       lastFocus: null,
       currentPage: "search",
@@ -1681,13 +1684,16 @@
       return result;
     }
 
-    function setAuth(authenticated, staffName = "") {
+    function setAuth(authenticated, staffName = "", authRequired = true) {
       state.authenticated = authenticated;
       state.staffName = staffName;
-      els.password.disabled = authenticated;
-      els.loginButton.disabled = authenticated;
-      els.logoutButton.disabled = !authenticated;
-      els.sidebarLogoutButton.disabled = !authenticated;
+      state.authRequired = authRequired;
+      els.loginPasswordField.classList.toggle("hidden", !authRequired);
+      els.loginActions.classList.toggle("hidden", !authRequired);
+      els.password.disabled = authenticated || !authRequired;
+      els.loginButton.disabled = authenticated || !authRequired;
+      els.logoutButton.disabled = !authenticated || !authRequired;
+      els.sidebarLogoutButton.disabled = !authenticated || !authRequired;
       els.searchButton.disabled = !authenticated;
       els.subSearchButton.disabled = !authenticated;
       els.manualMode.disabled = !authenticated;
@@ -1698,12 +1704,12 @@
     async function checkSession() {
       try {
         const result = await api("/api/session");
-        setAuth(true, result.staffName);
-        toast("success", `Logged in as ${result.staffName}.`);
+        setAuth(true, result.staffName, result.authRequired !== false);
+        if (result.authRequired !== false) toast("success", `Logged in as ${result.staffName}.`);
         await loadHistory();
         await navigate(state.currentPage, false);
       } catch (error) {
-        setAuth(false);
+        setAuth(false, "", true);
         renderHistory([]);
       }
     }
@@ -1719,7 +1725,7 @@
           body: JSON.stringify({ password: els.password.value, staffName: "Welkom USA Staff" })
         });
         els.password.value = "";
-        setAuth(true, result.staffName);
+        setAuth(true, result.staffName, result.authRequired !== false);
         toast("success", "Logged in.");
         await loadHistory();
         await navigate(state.currentPage, false);
@@ -1733,7 +1739,7 @@
         await api("/api/logout", { method: "POST" });
       } catch (error) {
       } finally {
-        setAuth(false);
+        setAuth(false, "", true);
         toast("success", "Logged out.");
       }
     }
@@ -2293,6 +2299,7 @@
         ["Storage", `${status.storageProvider || "-"}${status.storagePersistent ? " persistent" : " memory"}`],
         ["Storage health", status.storageHealthy === false ? "Needs first write" : "Available", statusBadge(status.storageHealthy !== false, "Available", "Needs init")],
         ["Blob init action", status.blobInitEnabled ? "Enabled" : "Disabled", statusBadge(status.blobInitEnabled, "Enabled", "Disabled")],
+        ["Staff login", status.authRequired ? "Required" : "Disabled for testing", statusBadge(!status.authRequired, "Disabled", "Required")],
         ["SMS consent required", status.consentEnforced ? "Yes" : "No", statusBadge(status.consentEnforced, "Required", "Disabled")],
         ["Cloudflare required", status.cloudflareRequired ? "Yes" : "No"]
       ]);

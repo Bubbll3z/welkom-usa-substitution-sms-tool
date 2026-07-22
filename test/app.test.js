@@ -187,6 +187,7 @@ test.beforeEach(() => {
   delete process.env.SHOPIFY_CLIENT_ID;
   delete process.env.SHOPIFY_CLIENT_SECRET;
   delete process.env.BLOB_INIT_ENABLED;
+  delete process.env.REQUIRE_LOGIN;
   resetStoreFactory();
 });
 
@@ -209,6 +210,20 @@ test("authentication supports login, session, logout, wrong password, and expire
 test("unauthenticated API request is rejected", async () => {
   const response = await handler(event("/api/order-search", { query: "#1023" }));
   assert.equal(response.statusCode, 401);
+});
+
+test("temporary no-login mode opens authenticated routes without a password", async () => {
+  process.env.REQUIRE_LOGIN = "false";
+
+  const session = await handler(event("/api/session", undefined, {}, "GET"));
+  assert.equal(session.statusCode, 200);
+  assert.equal(JSON.parse(session.body).authRequired, false);
+
+  const dashboard = await handler(event("/api/dashboard", undefined, {}, "GET"));
+  assert.equal(dashboard.statusCode, 200);
+  const dashboardBody = JSON.parse(dashboard.body);
+  assert.equal(dashboardBody.success, true);
+  assert.equal(dashboardBody.status.authRequired, false);
 });
 
 test("builds and validates the approved substitution message", () => {
