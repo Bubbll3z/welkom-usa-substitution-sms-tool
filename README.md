@@ -234,6 +234,8 @@ Credential scan before commit:
 node scripts/credential-scan.js
 ```
 
+For staff instructions, see [WAREHOUSE_MANUAL.md](WAREHOUSE_MANUAL.md).
+
 Manual checks before real SMS:
 
 1. Log in with the staff password.
