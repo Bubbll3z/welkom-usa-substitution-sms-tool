@@ -1,5 +1,7 @@
 require("dotenv").config();
 
+const crypto = require("node:crypto");
+
 const {
   checkStaffPassword,
   clearSessionCookie,
@@ -17,7 +19,7 @@ const {
   searchProductsForSubstitutions,
   searchSubstitutionsForLineItem
 } = require("../../src/shopify");
-const { buildSubstitutionMessage, redactPhone, sendSms, smsLength, validateMessage, validateTwilioSignature } = require("../../src/sms");
+const { buildSubstitutionMessage, isE164, redactPhone, sendSms, smsLength, validateMessage, validateTwilioSignature } = require("../../src/sms");
 const {
   archiveTemplate,
   backupPayload,
@@ -61,6 +63,26 @@ function safeErrorDetail(errorValue) {
   const message = String(errorValue?.message || errorValue || "Unknown error.");
   if (/token|secret|password|authorization|cookie/i.test(message)) return "A protected configuration value could not be used.";
   return message.slice(0, 180);
+}
+
+function safeConfigDiagnostics() {
+  const checks = [];
+  const add = (name, ok, guidance) => checks.push({ name, ok: Boolean(ok), guidance: ok ? "" : guidance });
+  const storageProvider = process.env.MESSAGE_STORAGE_PROVIDER || (process.env.NETLIFY === "true" ? "netlify-blobs" : "memory");
+  add("STAFF_PASSWORD", Boolean(process.env.STAFF_PASSWORD), "Add STAFF_PASSWORD in Netlify environment variables.");
+  add("SESSION_SECRET", String(process.env.SESSION_SECRET || "").length >= 32, "Add SESSION_SECRET with at least 32 random characters.");
+  add("SHOPIFY_SHOP_DOMAIN", Boolean(process.env.SHOPIFY_SHOP_DOMAIN), "Add SHOPIFY_SHOP_DOMAIN, for example welkom-usa.myshopify.com.");
+  add("Shopify credentials", hasConfig(), "Add SHOPIFY_ADMIN_ACCESS_TOKEN or SHOPIFY_CLIENT_ID plus SHOPIFY_CLIENT_SECRET.");
+  add("TWILIO_ACCOUNT_SID", /^AC[a-fA-F0-9]{32}$/.test(String(process.env.TWILIO_ACCOUNT_SID || "")), "Add a valid TWILIO_ACCOUNT_SID starting with AC.");
+  add("Twilio auth", Boolean(process.env.TWILIO_AUTH_TOKEN || (process.env.TWILIO_API_KEY_SID && process.env.TWILIO_API_KEY_SECRET)), "Add TWILIO_AUTH_TOKEN or TWILIO_API_KEY_SID plus TWILIO_API_KEY_SECRET.");
+  add("Twilio sender", Boolean(process.env.TWILIO_MESSAGING_SERVICE_SID || process.env.TWILIO_FROM_NUMBER || process.env.TWILIO_PHONE_NUMBER), "Add TWILIO_MESSAGING_SERVICE_SID or a Twilio from number.");
+  add("MESSAGE_STORAGE_PROVIDER", String(storageProvider).toLowerCase() === "netlify-blobs", "Set MESSAGE_STORAGE_PROVIDER=netlify-blobs in Netlify.");
+  add("Netlify runtime", process.env.NETLIFY === "true", "This should be true automatically in deployed Netlify Functions. If false locally, Blob writes will not use deployed site credentials.");
+  add("SMS_DRY_RUN", String(process.env.SMS_DRY_RUN ?? process.env.DRY_RUN ?? "true").toLowerCase() !== "false", "Keep SMS_DRY_RUN=true until you are ready for real SMS sending.");
+  return {
+    ok: checks.every((check) => check.ok),
+    checks
+  };
 }
 
 function parseBody(event) {
@@ -242,6 +264,110 @@ function validateCustomSubstituteTitle(value) {
   if (title.length < 2 || title.length > 120) return { ok: false, code: "INVALID_REQUEST", error: "Custom substitute title must be between 2 and 120 characters." };
   if (/<\/?[a-z][\s\S]*>/i.test(title)) return { ok: false, code: "INVALID_REQUEST", error: "Custom substitute title cannot contain HTML." };
   return { ok: true, title };
+}
+
+function cleanManualText(value, fallback, max = 120) {
+  const clean = String(value || "").trim().replace(/\s+/g, " ");
+  if (!clean) return fallback;
+  return clean.slice(0, max);
+}
+
+function manualPhoneHash(phone) {
+  return crypto.createHash("sha256").update(String(phone || "").trim()).digest("hex").slice(0, 18);
+}
+
+async function handleSendManualSms(event) {
+  const limited = rateLimit(event, "send-manual-sms", 10);
+  if (limited) return limited;
+  if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
+  const auth = requireSession(event);
+  if (auth.error) return auth.error;
+
+  const body = parseBody(event);
+  if (!body) return error(400, "INVALID_REQUEST", "Request body must be valid JSON.");
+  if (!body.consentConfirmed) {
+    return error(400, "CONSENT_CONFIRMATION_REQUIRED", "Staff must confirm this manual recipient gave permission to receive this SMS.");
+  }
+
+  const phone = String(body.phone || "").trim();
+  if (!isE164(phone)) return error(400, "PHONE_INVALID", "Phone number must be valid E.164 format.");
+  const firstName = cleanManualText(body.firstName, "there", 60);
+  const unavailableItem = cleanManualText(body.unavailableItem, "your requested item");
+  const substituteItem = cleanManualText(body.substituteItem, "a substitute item");
+  const orderName = cleanManualText(body.reference, "manual", 40);
+  const fallbackMessage = buildSubstitutionMessage({ firstName, unavailableItem, substituteItem, orderName });
+  const finalMessage = String(body.message || "").trim() || fallbackMessage;
+  const messageValidation = validateMessage(finalMessage, "");
+  if (!messageValidation.ok) return error(400, messageValidation.code, messageValidation.error);
+
+  const phoneHash = manualPhoneHash(phone);
+  const idempotencyKey = body.idempotencyKey || `manual|${phoneHash}|${messageValidation.message}`;
+  const existingRequest = await findByIdempotency(idempotencyKey);
+  if (existingRequest) {
+    return json(200, { success: true, idempotent: true, message: "This manual request was already processed.", record: publicRecord(existingRequest) });
+  }
+
+  const duplicate = await findDuplicate({
+    orderId: `manual:${phoneHash}`,
+    lineItemId: `manual:${unavailableItem.toLowerCase()}`,
+    customSubstituteTitle: substituteItem
+  });
+  if (duplicate && !body.authorizedResend) {
+    return json(409, {
+      success: false,
+      code: "DUPLICATE_MESSAGE",
+      error: "A similar manual SMS was already processed for this recipient. Confirm authorised resend to send again.",
+      duplicate: publicRecord(duplicate)
+    });
+  }
+
+  const created = await createMessageRecord({
+    orderId: `manual:${phoneHash}`,
+    orderName: `Manual ${orderName}`,
+    customerPhoneRedacted: redactPhone(phone),
+    customerFirstName: firstName,
+    unavailableLineItemId: `manual:${unavailableItem.toLowerCase()}`,
+    unavailableTitle: unavailableItem,
+    substituteTitle: substituteItem,
+    customSubstitute: true,
+    customSubstituteTitle: substituteItem,
+    message: messageValidation.message,
+    staffIdentity: auth.session.staffName,
+    initialTwilioStatus: "created",
+    latestTwilioStatus: "created",
+    dryRun: undefined,
+    idempotencyKey
+  });
+  if (!created.ok) return error(500, created.code || "STORAGE_ERROR", created.error || "Message history could not be saved.");
+  if (created.idempotent) {
+    return json(200, { success: true, idempotent: true, message: "This manual request was already processed.", record: publicRecord(created.record) });
+  }
+
+  const smsResult = await sendSms({
+    phone,
+    message: messageValidation.message,
+    orderName: "",
+    recordId: created.record.id
+  });
+
+  const updatedRecord = await saveRecord({
+    ...created.record,
+    dryRun: smsResult.body.dryRun,
+    twilioMessageSid: smsResult.body.sid || "",
+    initialTwilioStatus: smsResult.body.providerStatus || "failed",
+    latestTwilioStatus: smsResult.body.providerStatus || "failed",
+    failureReason: smsResult.body.success ? "" : smsResult.body.error
+  });
+
+  if (smsResult.log) console.error("Twilio manual send error:", smsResult.log);
+  console.log("Manual SMS processed.", {
+    recipient: redactPhone(phone),
+    dryRun: smsResult.body.dryRun,
+    providerStatus: smsResult.body.providerStatus,
+    staffIdentity: auth.session.staffName
+  });
+
+  return json(smsResult.status, { ...smsResult.body, record: publicRecord(updatedRecord || created.record) });
 }
 
 async function handleSendSubstitutionSms(event) {
@@ -454,6 +580,12 @@ function safeConfigStatus() {
   };
 }
 
+async function handleConfigDiagnostics(event) {
+  const auth = requireSession(event);
+  if (auth.error) return auth.error;
+  return json(200, { success: true, diagnostics: safeConfigDiagnostics() });
+}
+
 async function handleInitializeBlobs(event) {
   if (String(process.env.BLOB_INIT_ENABLED || "").toLowerCase() !== "true") {
     return error(403, "BLOB_INIT_DISABLED", "Blob initialization is disabled. Temporarily set BLOB_INIT_ENABLED=true in Netlify, run initialization from Settings, then set it back to false.");
@@ -567,6 +699,7 @@ exports.handler = async (event) => {
   if (route === "twilio-status" && event.httpMethod === "POST") return handleTwilioStatus(event);
   if (route === "session" && event.httpMethod === "GET") return handleSession(event);
   if (route === "dashboard" && event.httpMethod === "GET") return handleDashboard(event);
+  if (route === "config-diagnostics" && event.httpMethod === "GET") return handleConfigDiagnostics(event);
   if (route === "message-history" && event.httpMethod === "GET") return handleHistory(event);
   if (route.startsWith("message-history/") && event.httpMethod === "GET") return handleHistoryRecord(event, route);
   if (route === "templates" && event.httpMethod === "GET") return handleTemplates(event);
@@ -587,6 +720,7 @@ exports.handler = async (event) => {
   if (route === "line-item-substitutions") return handleLineItemSubstitutions(event);
   if (route === "duplicate-check") return handleDuplicateCheck(event);
   if (route === "send-substitution-sms") return handleSendSubstitutionSms(event);
+  if (route === "send-manual-sms") return handleSendManualSms(event);
 
   return error(404, "NOT_FOUND", "Not found.");
 };

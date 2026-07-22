@@ -1127,6 +1127,43 @@
                 <button id="templateButton" class="btn-outline" type="button">Use Template v</button>
               </div>
 
+              <div class="notice" style="margin-bottom:14px;">
+                <label style="display:flex; align-items:center; gap:8px; margin:0;">
+                  <input id="manualMode" type="checkbox">
+                  Manual physical-shop SMS
+                </label>
+                <div id="manualFields" class="hidden" style="margin-top:12px;">
+                  <div class="search-row">
+                    <div>
+                      <label for="manualPhone">Recipient phone</label>
+                      <input id="manualPhone" type="tel" placeholder="+15551234567" autocomplete="off">
+                    </div>
+                    <div>
+                      <label for="manualFirstName">First name</label>
+                      <input id="manualFirstName" type="text" placeholder="Customer" autocomplete="off">
+                    </div>
+                  </div>
+                  <div class="search-row" style="margin-top:10px;">
+                    <div>
+                      <label for="manualUnavailable">Item unavailable</label>
+                      <input id="manualUnavailable" type="text" placeholder="Requested item" autocomplete="off">
+                    </div>
+                    <div>
+                      <label for="manualSubstitute">Substitute item</label>
+                      <input id="manualSubstitute" type="text" placeholder="Replacement item" autocomplete="off">
+                    </div>
+                  </div>
+                  <div class="field" style="margin-top:10px;">
+                    <label for="manualReference">Reference</label>
+                    <input id="manualReference" type="text" placeholder="Physical shop / receipt / note" autocomplete="off">
+                  </div>
+                  <label style="display:flex; align-items:flex-start; gap:8px; margin-top:10px;">
+                    <input id="manualConsent" type="checkbox">
+                    <span>Staff confirms this recipient gave permission to receive this SMS.</span>
+                  </label>
+                </div>
+              </div>
+
               <label for="message">Editable SMS message</label>
               <div class="textarea-wrap">
                 <textarea id="message" maxlength="320" placeholder="Your substitution message will appear here."></textarea>
@@ -1281,6 +1318,7 @@
                 <button id="restoreTemplateButton" class="btn-outline" type="button">Restore Default Template</button>
               </div>
               <div id="settingsActionsStatus" class="notice hidden" style="margin-top:12px;"></div>
+              <div id="diagnosticsList" class="history-list" style="margin-top:12px;"></div>
               <p class="fine" style="margin-top:12px;">Secrets are configured in Netlify environment variables and local .env files only. Settings actions never display or change secret values.</p>
             </div>
           </article>
@@ -1347,6 +1385,14 @@
       subSearchButton: document.getElementById("subSearchButton"),
       subSearchState: document.getElementById("subSearchState"),
       customSubButton: document.getElementById("customSubButton"),
+      manualMode: document.getElementById("manualMode"),
+      manualFields: document.getElementById("manualFields"),
+      manualPhone: document.getElementById("manualPhone"),
+      manualFirstName: document.getElementById("manualFirstName"),
+      manualUnavailable: document.getElementById("manualUnavailable"),
+      manualSubstitute: document.getElementById("manualSubstitute"),
+      manualReference: document.getElementById("manualReference"),
+      manualConsent: document.getElementById("manualConsent"),
       message: document.getElementById("message"),
       previewBubble: document.getElementById("previewBubble"),
       previewTime: document.getElementById("previewTime"),
@@ -1397,6 +1443,7 @@
       initializeBlobsButton: document.getElementById("initializeBlobsButton"),
       restoreTemplateButton: document.getElementById("restoreTemplateButton"),
       settingsActionsStatus: document.getElementById("settingsActionsStatus"),
+      diagnosticsList: document.getElementById("diagnosticsList"),
       backupInfo: document.getElementById("backupInfo"),
       exportJsonButton: document.getElementById("exportJsonButton"),
       exportCsvButton: document.getElementById("exportCsvButton")
@@ -1412,6 +1459,7 @@
       order: null,
       unavailableItem: null,
       substituteItem: null,
+      manualMode: false,
       authorizedResend: false,
       lastFocus: null,
       currentPage: "search",
@@ -1574,6 +1622,7 @@
       els.sidebarLogoutButton.disabled = !authenticated;
       els.searchButton.disabled = !authenticated;
       els.subSearchButton.disabled = !authenticated;
+      els.manualMode.disabled = !authenticated;
       els.subSearchState.textContent = authenticated ? "Shopify suggestions" : "Log in first";
       updateSendState();
     }
@@ -1655,6 +1704,18 @@
       return String(state.order?.name || "").replace(/^#/, "");
     }
 
+    function isManualMode() {
+      return Boolean(state.manualMode);
+    }
+
+    function isE164(phone) {
+      return /^\+[1-9]\d{7,14}$/.test(String(phone || "").trim());
+    }
+
+    function manualValue(input, fallback) {
+      return String(input?.value || "").trim().replace(/\s+/g, " ") || fallback;
+    }
+
     function isGsm7(text) {
       return Array.from(String(text || "")).every((char) => GSM_7_BASIC.includes(char) || GSM_7_EXTENDED.includes(char));
     }
@@ -1670,13 +1731,23 @@
     }
 
     function fillTemplate() {
-      if (!state.order || !state.unavailableItem || !state.substituteItem) return;
-      const values = {
-        "[FIRST NAME]": state.order.customer?.firstName || "there",
-        "[ORDER NUMBER]": orderNumberClean(),
-        "[UNAVAILABLE ITEM]": state.unavailableItem.title || "your item",
-        "[SUBSTITUTE ITEM]": state.substituteItem.title || "a substitute item"
-      };
+      let values;
+      if (isManualMode()) {
+        values = {
+          "[FIRST NAME]": manualValue(els.manualFirstName, "there"),
+          "[ORDER NUMBER]": manualValue(els.manualReference, "manual"),
+          "[UNAVAILABLE ITEM]": manualValue(els.manualUnavailable, "your requested item"),
+          "[SUBSTITUTE ITEM]": manualValue(els.manualSubstitute, "a substitute item")
+        };
+      } else {
+        if (!state.order || !state.unavailableItem || !state.substituteItem) return;
+        values = {
+          "[FIRST NAME]": state.order.customer?.firstName || "there",
+          "[ORDER NUMBER]": orderNumberClean(),
+          "[UNAVAILABLE ITEM]": state.unavailableItem.title || "your item",
+          "[SUBSTITUTE ITEM]": state.substituteItem.title || "a substitute item"
+        };
+      }
       els.message.value = TEMPLATE.replace(/\[FIRST NAME\]|\[ORDER NUMBER\]|\[UNAVAILABLE ITEM\]|\[SUBSTITUTE ITEM\]/g, (token) => values[token]);
       updateMessageState();
     }
@@ -1701,6 +1772,14 @@
     function missingSendRequirements() {
       const missing = [];
       if (!state.authenticated) missing.push("staff is logged in");
+      if (isManualMode()) {
+        if (!isE164(els.manualPhone.value)) missing.push("manual phone is in international format");
+        if (!els.manualConsent.checked) missing.push("manual SMS permission is confirmed");
+        if (!els.message.value.trim()) missing.push("the message is not empty");
+        if (!els.message.value.trim().startsWith("Welkom USA:")) missing.push("message starts with Welkom USA:");
+        if (/\[[A-Z ]+\]/.test(els.message.value)) missing.push("all placeholders are replaced");
+        return missing;
+      }
       if (!state.order) missing.push("an order is loaded");
       if (state.order?.cancelled) missing.push("order is not cancelled");
       if (!state.order?.customer?.redactedPhone) missing.push("a customer phone number exists");
@@ -1728,7 +1807,9 @@
       els.copyButton.disabled = !els.message.value.trim();
       els.sendReadiness.className = missing.length ? "notice warn" : "notice";
       els.sendReadiness.textContent = missing.length ? `Before sending, confirm: ${missing.join(", ")}.` : "Ready to send after final confirmation.";
-      els.messageHelp.textContent = state.order?.customer?.redactedPhone ? `This message will be sent to ${state.order.customer.redactedPhone}` : "Select an order item to replace and a substitute item.";
+      els.messageHelp.textContent = isManualMode()
+        ? `Manual SMS will be sent to ${els.manualPhone.value.trim() || "the typed phone number"}.`
+        : state.order?.customer?.redactedPhone ? `This message will be sent to ${state.order.customer.redactedPhone}` : "Select an order item to replace and a substitute item.";
     }
 
     function setEmptyOrder() {
@@ -1969,6 +2050,14 @@
       updateMessageState();
     }
 
+    function toggleManualMode() {
+      state.manualMode = els.manualMode.checked;
+      els.manualFields.classList.toggle("hidden", !state.manualMode);
+      state.authorizedResend = false;
+      if (state.manualMode && !els.message.value.trim()) fillTemplate();
+      updateMessageState();
+    }
+
     async function copyMessage() {
       if (!els.message.value.trim()) return toast("error", "Build a message first.");
       await navigator.clipboard.writeText(els.message.value);
@@ -1996,6 +2085,9 @@
     }
 
     function idempotencyKey() {
+      if (isManualMode()) {
+        return `manual|${els.manualPhone.value.trim()}|${els.manualUnavailable.value.trim()}|${els.manualSubstitute.value.trim()}|${els.message.value}`;
+      }
       return `${state.order.id}|${state.unavailableItem.id}|${state.substituteItem.id}|${state.substituteItem.customSubstitute ? "custom" : "shopify"}|${els.message.value}`;
     }
 
@@ -2003,7 +2095,9 @@
       const missing = missingSendRequirements();
       if (missing.length) return toast("error", `Cannot send yet: ${missing.join(", ")}.`);
       const estimate = smsEstimate(els.message.value);
-      els.confirmBody.textContent = `Customer: ${state.order.customer.firstName || ""} ${state.order.customer.lastName || ""}\nPhone: ${state.order.customer.redactedPhone}\nOrder: ${state.order.name}\nUnavailable: ${state.unavailableItem.title}\nSubstitute: ${state.substituteItem.title}\nConsent: ${state.order.smsConsent.granted ? "SMS Opt-In" : "No SMS Consent"}\nSegments: ${estimate.segments} (${estimate.encoding})\n\n${els.message.value}`;
+      els.confirmBody.textContent = isManualMode()
+        ? `Manual recipient: ${manualValue(els.manualFirstName, "Customer")}\nPhone: ${els.manualPhone.value.trim()}\nReference: ${manualValue(els.manualReference, "manual")}\nPermission: confirmed by staff\nSegments: ${estimate.segments} (${estimate.encoding})\n\n${els.message.value}`
+        : `Customer: ${state.order.customer.firstName || ""} ${state.order.customer.lastName || ""}\nPhone: ${state.order.customer.redactedPhone}\nOrder: ${state.order.name}\nUnavailable: ${state.unavailableItem.title}\nSubstitute: ${state.substituteItem.title}\nConsent: ${state.order.smsConsent.granted ? "SMS Opt-In" : "No SMS Consent"}\nSegments: ${estimate.segments} (${estimate.encoding})\n\n${els.message.value}`;
       state.lastFocus = document.activeElement;
       els.modalBackdrop.classList.add("open");
       els.confirmSendButton.focus();
@@ -2019,11 +2113,22 @@
       els.sendButton.disabled = true;
       els.confirmSendButton.disabled = true;
       try {
-        const response = await fetch("/api/send-substitution-sms", {
+        const manual = isManualMode();
+        const response = await fetch(manual ? "/api/send-manual-sms" : "/api/send-substitution-sms", {
           method: "POST",
           credentials: "same-origin",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+          body: JSON.stringify(manual ? {
+            phone: els.manualPhone.value.trim(),
+            firstName: els.manualFirstName.value,
+            unavailableItem: els.manualUnavailable.value,
+            substituteItem: els.manualSubstitute.value,
+            reference: els.manualReference.value,
+            consentConfirmed: els.manualConsent.checked,
+            message: els.message.value,
+            idempotencyKey: idempotencyKey(),
+            authorizedResend: state.authorizedResend
+          } : {
             orderId: state.order.id,
             lineItemId: state.unavailableItem.id,
             substituteVariantId: state.substituteItem.customSubstitute ? "" : state.substituteItem.id,
@@ -2272,6 +2377,7 @@
     async function loadSettings() {
       if (!state.authenticated) {
         renderStatusGrid(els.settingsStatus, [["Session", "Log in first", statusBadge(false, "Active", "Logged out")]]);
+        clear(els.diagnosticsList);
         els.initializeBlobsButton.disabled = true;
         els.restoreTemplateButton.disabled = true;
         return;
@@ -2282,10 +2388,31 @@
         const result = await api("/api/dashboard");
         renderSafeStatus(els.settingsStatus, result.status || {});
         if (result.warning) setSettingsActionStatus("warn", result.warning);
+        await loadConfigDiagnostics();
       } catch (error) {
         clear(els.settingsStatus);
         els.settingsStatus.append(el("div", "notice error", `${error.message}${error.code ? ` (${error.code})` : ""}`));
         setSettingsActionStatus("error", "Status could not be loaded. Check that you are logged in, then try Initialize Blob Stores if storage is the failing area.");
+      }
+    }
+
+    async function loadConfigDiagnostics() {
+      clear(els.diagnosticsList);
+      try {
+        const result = await api("/api/config-diagnostics");
+        const checks = result.diagnostics?.checks || [];
+        if (!checks.length) return;
+        checks.forEach((check) => {
+          const row = el("div", "message-row");
+          const main = el("div");
+          main.append(el("strong", "", check.name));
+          main.append(el("p", "", check.ok ? "Looks configured." : check.guidance || "Needs attention."));
+          row.append(main);
+          row.append(el("span", check.ok ? "badge" : "badge error", check.ok ? "OK" : "Fix"));
+          els.diagnosticsList.append(row);
+        });
+      } catch (error) {
+        els.diagnosticsList.append(el("div", "notice warn", `Diagnostics could not load: ${error.message}`));
       }
     }
 
@@ -2398,6 +2525,17 @@
       if (event.key === "Enter") searchSubstitutions();
     });
     els.customSubButton.addEventListener("click", addCustomSubstitute);
+    els.manualMode.addEventListener("change", toggleManualMode);
+    [els.manualPhone, els.manualFirstName, els.manualUnavailable, els.manualSubstitute, els.manualReference, els.manualConsent].forEach((node) => {
+      node.addEventListener("input", () => {
+        state.authorizedResend = false;
+        if (isManualMode()) updateMessageState();
+      });
+      node.addEventListener("change", () => {
+        state.authorizedResend = false;
+        if (isManualMode()) updateMessageState();
+      });
+    });
     els.message.addEventListener("input", () => {
       state.authorizedResend = false;
       updateMessageState();
@@ -2424,6 +2562,11 @@
       }
     });
     els.templateButton.addEventListener("click", () => {
+      if (isManualMode()) {
+        fillTemplate();
+        toast("success", "Manual template applied.");
+        return;
+      }
       const missing = [];
       if (!state.order) missing.push("load an order");
       if (!state.unavailableItem) missing.push("select the item to replace");
