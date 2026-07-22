@@ -1,6 +1,7 @@
 require("dotenv").config();
 
 const crypto = require("node:crypto");
+const { connectLambda } = require("@netlify/blobs");
 
 const {
   checkStaffPassword,
@@ -43,6 +44,16 @@ const {
 const apiBuckets = new Map();
 const MAX_BODY_BYTES = 16 * 1024;
 
+function connectNetlifyBlobs(event) {
+  if (!event?.blobs) return { connected: false, reason: "no-lambda-blob-payload" };
+  try {
+    connectLambda(event);
+    return { connected: true };
+  } catch (error) {
+    return { connected: false, reason: error?.name || "blob-context-error" };
+  }
+}
+
 function json(statusCode, body, headers = {}) {
   return {
     statusCode,
@@ -74,7 +85,7 @@ function safeErrorDetail(errorValue) {
   return message.slice(0, 180);
 }
 
-function safeConfigDiagnostics() {
+function safeConfigDiagnostics(event) {
   const checks = [];
   const add = (name, ok, guidance) => checks.push({ name, ok: Boolean(ok), guidance: ok ? "" : guidance });
   const storageProvider = process.env.MESSAGE_STORAGE_PROVIDER || (process.env.NETLIFY === "true" ? "netlify-blobs" : "memory");
@@ -87,6 +98,7 @@ function safeConfigDiagnostics() {
   add("Twilio sender", Boolean(process.env.TWILIO_MESSAGING_SERVICE_SID || process.env.TWILIO_FROM_NUMBER || process.env.TWILIO_PHONE_NUMBER), "Add TWILIO_MESSAGING_SERVICE_SID or a Twilio from number.");
   add("MESSAGE_STORAGE_PROVIDER", String(storageProvider).toLowerCase() === "netlify-blobs", "Set MESSAGE_STORAGE_PROVIDER=netlify-blobs in Netlify.");
   add("Netlify runtime", process.env.NETLIFY === "true", "This should be true automatically in deployed Netlify Functions. If false locally, Blob writes will not use deployed site credentials.");
+  add("Netlify Blob payload", Boolean(event?.blobs || process.env.NETLIFY_BLOBS_CONTEXT), "Redeploy on Netlify so Functions receive the automatic Blob context payload.");
   add("SMS_DRY_RUN", String(process.env.SMS_DRY_RUN ?? process.env.DRY_RUN ?? "true").toLowerCase() !== "false", "Keep SMS_DRY_RUN=true until you are ready for real SMS sending.");
   return {
     ok: checks.every((check) => check.ok),
@@ -592,10 +604,10 @@ function safeConfigStatus() {
 async function handleConfigDiagnostics(event) {
   const auth = requireSession(event);
   if (auth.error) return auth.error;
-  return json(200, { success: true, diagnostics: safeConfigDiagnostics() });
+  return json(200, { success: true, diagnostics: safeConfigDiagnostics(event) });
 }
 
-async function handleInitializeBlobs(event) {
+async function handleInitializeBlobs(event, blobConnection = { connected: false, reason: "unknown" }) {
   if (String(process.env.BLOB_INIT_ENABLED || "").toLowerCase() !== "true") {
     return error(403, "BLOB_INIT_DISABLED", "Blob initialization is disabled. Temporarily set BLOB_INIT_ENABLED=true in Netlify, run initialization from Settings, then set it back to false.");
   }
@@ -611,7 +623,9 @@ async function handleInitializeBlobs(event) {
       recordType: initError.recordType || "",
       fieldName: initError.fieldName || "",
       rule: initError.rule || "",
-      errorCode: initError.code || "STORAGE_ERROR"
+      errorCode: initError.code || "STORAGE_ERROR",
+      errorName: initError.cause?.name || initError.name || "",
+      blobContext: blobConnection.connected ? "lambda-payload" : blobConnection.reason
     };
     console.error("Blob initialization error:", diagnostic);
     return storageErrorResponse(500, "STORAGE_ERROR", `Blob initialization failed during ${diagnostic.stage}.`, diagnostic);
@@ -710,6 +724,7 @@ async function handleTwilioStatus(event) {
 }
 
 exports.handler = async (event) => {
+  const blobConnection = connectNetlifyBlobs(event);
   const route = routeName(event);
   if (bodyTooLarge(event)) return error(413, "INVALID_REQUEST", "Request body is too large.");
 
@@ -729,7 +744,7 @@ exports.handler = async (event) => {
 
   if (route === "login") return handleLogin(event);
   if (route === "logout") return handleLogout(event);
-  if (route === "admin/init-blobs") return handleInitializeBlobs(event);
+  if (route === "admin/init-blobs") return handleInitializeBlobs(event, blobConnection);
   if (route === "templates") return handleTemplates(event);
   if (/^templates\/.+\/archive$/.test(route)) return handleTemplateArchive(event, route);
   if (route === "order-search") return handleOrderSearch(event);
