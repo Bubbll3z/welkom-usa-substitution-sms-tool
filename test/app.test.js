@@ -695,11 +695,49 @@ test("blob initialization endpoint requires staff authentication and is idempote
   assert.equal(first.statusCode, 200);
   const firstBody = JSON.parse(first.body);
   assert.equal(firstBody.success, true);
-  assert.equal(firstBody.stores.history, "welkom-sms-history");
+  assert.equal(firstBody.stores["welkom-sms-history"], "initialized");
+  assert.equal(firstBody.stores["welkom-sms-templates"], "initialized");
+  assert.equal(firstBody.stores["welkom-sms-audit"], "initialized");
+  assert.equal(firstBody.stores["welkom-sms-settings"], "initialized");
 
   const second = await handler(event("/api/admin/init-blobs", {}, { cookie }, "POST"));
   assert.equal(second.statusCode, 200);
   assert.equal(JSON.parse(second.body).success, true);
+});
+
+test("blob initialization failures return safe structured diagnostics", async () => {
+  const cookie = await loginCookie();
+  process.env.BLOB_INIT_ENABLED = "true";
+  process.env.MESSAGE_STORAGE_PROVIDER = "netlify-blobs";
+  setStoreFactory((name) => ({
+    async list() {
+      return { blobs: [] };
+    },
+    async get() {
+      return null;
+    },
+    async setJSON(key) {
+      if (name === "welkom-sms-settings" && key.startsWith("settings/")) {
+        const error = new Error("protected token value should not be shown");
+        error.code = "SIMULATED_STORAGE_ERROR";
+        throw error;
+      }
+    }
+  }));
+  try {
+    const response = await handler(event("/api/admin/init-blobs", {}, { cookie }, "POST"));
+    assert.equal(response.statusCode, 500);
+    const body = JSON.parse(response.body);
+    assert.equal(body.code, "STORAGE_ERROR");
+    assert.equal(body.diagnostic.stage, "settings-first-write");
+    assert.equal(body.diagnostic.storeName, "welkom-sms-settings");
+    assert.equal(body.diagnostic.recordType, "settings");
+    assert.equal(body.diagnostic.errorCode, "SIMULATED_STORAGE_ERROR");
+    assert.doesNotMatch(response.body, /protected token value should not be shown/);
+  } finally {
+    process.env.MESSAGE_STORAGE_PROVIDER = "memory";
+    resetStoreFactory();
+  }
 });
 
 test("Twilio status callback validates signatures", async () => {

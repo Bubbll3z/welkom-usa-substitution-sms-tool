@@ -6,7 +6,7 @@ process.env.MESSAGE_STORAGE_PROVIDER = "netlify-blobs";
 
 const dataStore = require("../src/data-store");
 
-function makeMockStores({ failWrites = false } = {}) {
+function makeMockStores({ failWrites = false, failStore = "", failKeyPattern = null } = {}) {
   const maps = new Map();
   function mapFor(name) {
     if (!maps.has(name)) maps.set(name, new Map());
@@ -19,6 +19,11 @@ function makeMockStores({ failWrites = false } = {}) {
         return map.has(key) ? map.get(key) : null;
       },
       async set(key, value, options = {}) {
+        if (failStore === name && (!failKeyPattern || failKeyPattern.test(key))) {
+          const error = new Error("safe simulated write failure");
+          error.code = "SIMULATED_STORAGE_ERROR";
+          throw error;
+        }
         if (failWrites) throw new Error("mock storage unavailable");
         if (options.onlyIfNew && map.has(key)) {
           const error = new Error("already exists");
@@ -67,15 +72,58 @@ test("Blob adapter creates expected site-wide stores on first writes", async () 
   const { maps } = makeMockStores();
   const init = await dataStore.initializeDataStores();
   assert.equal(init.ok, true);
-  assert.deepEqual(Object.values(dataStore.STORE_NAMES).sort(), [
-    "welkom-sms-audit",
-    "welkom-sms-history",
-    "welkom-sms-settings",
-    "welkom-sms-templates"
-  ].sort());
+  assert.deepEqual(Object.keys(init.stores).sort(), Object.values(dataStore.STORE_NAMES).sort());
+  assert.equal(init.stores["welkom-sms-history"], "initialized");
+  assert.equal(init.stores["welkom-sms-templates"], "initialized");
+  assert.equal(init.stores["welkom-sms-settings"], "initialized");
+  assert.equal(init.stores["welkom-sms-audit"], "initialized");
+  assert.equal(maps.has("welkom-sms-history"), true);
   assert.equal(maps.has("welkom-sms-templates"), true);
   assert.equal(maps.has("welkom-sms-settings"), true);
   assert.equal(maps.has("welkom-sms-audit"), true);
+});
+
+test("Blob initialization is idempotent and does not overwrite safe records", async () => {
+  const { mapFor } = makeMockStores();
+  const templates = mapFor("welkom-sms-templates");
+  templates.set("templates/default-substitution", JSON.stringify({
+    ...dataStore.defaultTemplate(),
+    name: "Existing default"
+  }));
+
+  const first = await dataStore.initializeDataStores();
+  const second = await dataStore.initializeDataStores();
+  const template = JSON.parse(templates.get("templates/default-substitution"));
+  assert.equal(first.stores["welkom-sms-templates"], "already-initialized");
+  assert.equal(second.stores["welkom-sms-templates"], "already-initialized");
+  assert.equal(template.name, "Existing default");
+
+  const settings = JSON.parse(mapFor("welkom-sms-settings").get("settings/blob_initialization"));
+  assert.deepEqual(Object.keys(settings).sort(), [
+    "defaultTemplateId",
+    "dryRun",
+    "duplicateWindowMinutes",
+    "initializedAt",
+    "schemaVersion",
+    "smsConsentRequired"
+  ].sort());
+  assert.doesNotMatch(JSON.stringify(settings), /token|secret|password|authorization|cookie|process\.env/i);
+});
+
+test("Blob initialization failures include safe stage and store diagnostics", async () => {
+  makeMockStores({ failStore: "welkom-sms-settings", failKeyPattern: /^settings\// });
+  await assert.rejects(
+    () => dataStore.initializeDataStores(),
+    (error) => {
+      assert.equal(error.name, "StoreInitializationError");
+      assert.equal(error.stage, "settings-first-write");
+      assert.equal(error.storeName, "welkom-sms-settings");
+      assert.equal(error.recordType, "settings");
+      assert.equal(error.code, "SIMULATED_STORAGE_ERROR");
+      assert.doesNotMatch(JSON.stringify(error), /secret|password|authorization|cookie/i);
+      return true;
+    }
+  );
 });
 
 test("message history supports first write, strong read, update, pagination and empty stores", async () => {

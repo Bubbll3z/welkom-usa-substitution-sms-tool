@@ -59,6 +59,15 @@ function error(statusCode, code, message) {
   return json(statusCode, { success: false, code, error: message });
 }
 
+function storageErrorResponse(statusCode, code, message, diagnostic = {}) {
+  return json(statusCode, {
+    success: false,
+    code,
+    error: message,
+    diagnostic: Object.fromEntries(Object.entries(diagnostic).filter(([, value]) => value !== undefined && value !== ""))
+  });
+}
+
 function safeErrorDetail(errorValue) {
   const message = String(errorValue?.message || errorValue || "Unknown error.");
   if (/token|secret|password|authorization|cookie/i.test(message)) return "A protected configuration value could not be used.";
@@ -595,9 +604,17 @@ async function handleInitializeBlobs(event) {
   try {
     const result = await initializeDataStores();
     return json(200, { success: true, ...result });
-  } catch (storageError) {
-    console.error("Blob initialization error:", storageError.message);
-    return error(500, "STORAGE_ERROR", `Blob initialization failed: ${safeErrorDetail(storageError)}`);
+  } catch (initError) {
+    const diagnostic = {
+      stage: initError.stage || "unknown",
+      storeName: initError.storeName || "",
+      recordType: initError.recordType || "",
+      fieldName: initError.fieldName || "",
+      rule: initError.rule || "",
+      errorCode: initError.code || "STORAGE_ERROR"
+    };
+    console.error("Blob initialization error:", diagnostic);
+    return storageErrorResponse(500, "STORAGE_ERROR", `Blob initialization failed during ${diagnostic.stage}.`, diagnostic);
   }
 }
 

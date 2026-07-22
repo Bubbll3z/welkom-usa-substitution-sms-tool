@@ -11,6 +11,25 @@ const STORE_NAMES = {
   settings: "welkom-sms-settings"
 };
 
+const INIT_STATUS = {
+  initialized: "initialized",
+  existing: "already-initialized"
+};
+
+class StoreInitializationError extends Error {
+  constructor({ stage, storeName, recordType, fieldName, rule, code, cause }) {
+    super(`Blob initialization failed at ${stage}.`);
+    this.name = "StoreInitializationError";
+    this.stage = stage;
+    this.storeName = storeName;
+    this.recordType = recordType;
+    this.fieldName = fieldName || "";
+    this.rule = rule || "";
+    this.code = code || cause?.code || "STORAGE_ERROR";
+    this.cause = cause;
+  }
+}
+
 const memoryStores = {
   history: new Map(),
   templates: new Map(),
@@ -128,6 +147,39 @@ async function getJsonSafe(targetStore, key) {
 async function setJson(targetStore, key, value, options = {}) {
   if (typeof targetStore.setJSON === "function") return targetStore.setJSON(key, value, options);
   return targetStore.set(key, JSON.stringify(value), options);
+}
+
+function initializationFailure(stage, storeKind, recordType, cause, fieldName = "", rule = "") {
+  return new StoreInitializationError({
+    stage,
+    storeName: STORE_NAMES[storeKind] || storeKind,
+    recordType,
+    fieldName,
+    rule,
+    code: cause?.code || "STORAGE_ERROR",
+    cause
+  });
+}
+
+async function setJsonOnlyIfNew(storeKind, key, value, stage, recordType) {
+  try {
+    await setJson(store(storeKind), key, value, { onlyIfNew: true });
+    return INIT_STATUS.initialized;
+  } catch (error) {
+    if (error?.code === "BLOB_ALREADY_EXISTS" || error?.status === 412) return INIT_STATUS.existing;
+    throw initializationFailure(stage, storeKind, recordType, error);
+  }
+}
+
+function safeInitializationSettings(initializedAt) {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    dryRun: true,
+    smsConsentRequired: true,
+    duplicateWindowMinutes: 0,
+    defaultTemplateId: "default-substitution",
+    initializedAt
+  };
 }
 
 function publicRecord(record) {
@@ -426,26 +478,31 @@ async function archiveTemplate(id, env = process.env) {
 }
 
 async function initializeDataStores(env = process.env) {
-  const existingTemplates = await listRawByPrefix(store("templates", env), "templates/", 20);
-  const wroteDefaultTemplate = existingTemplates.length === 0;
-  if (wroteDefaultTemplate) {
-    await setJson(store("templates", env), "templates/default-substitution", defaultTemplate(), { onlyIfNew: true }).catch(() => null);
-  }
   const initializedAt = nowIso();
-  const settingsRecord = {
+  const stores = {};
+  stores[STORE_NAMES.history] = await setJsonOnlyIfNew("history", "init/blob_initialization", {
     schemaVersion: SCHEMA_VERSION,
-    key: "blob_initialization",
-    app: "welkom-substitution-sms-tool",
-    storeNames: STORE_NAMES,
     initializedAt
-  };
-  await setJson(store("settings", env), "settings/blob_initialization", settingsRecord, { onlyIfNew: true }).catch(() => null);
-  await createAuditRecord({ type: "blob_stores_initialized", details: { wroteDefaultTemplate } }, env);
+  }, "history-first-write", "history-initialization");
+  stores[STORE_NAMES.templates] = await setJsonOnlyIfNew("templates", "templates/default-substitution", defaultTemplate(), "template-default-write", "template");
+  stores[STORE_NAMES.settings] = await setJsonOnlyIfNew("settings", "settings/blob_initialization", safeInitializationSettings(initializedAt), "settings-first-write", "settings");
+  try {
+    await createAuditRecord({
+      type: "blob_stores_initialized",
+      details: {
+        history: stores[STORE_NAMES.history],
+        templates: stores[STORE_NAMES.templates],
+        settings: stores[STORE_NAMES.settings]
+      }
+    }, env);
+    stores[STORE_NAMES.audit] = INIT_STATUS.initialized;
+  } catch (error) {
+    throw initializationFailure("audit-first-write", "audit", "audit", error);
+  }
   return {
     ok: true,
     initializedAt,
-    wroteDefaultTemplate,
-    stores: STORE_NAMES
+    stores
   };
 }
 
@@ -478,6 +535,7 @@ module.exports = {
   STORE_NAMES,
   SCHEMA_VERSION,
   DEFAULT_TEMPLATE_BODY,
+  StoreInitializationError,
   archiveTemplate,
   backupPayload,
   checkDuplicateMessage,
