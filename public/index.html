@@ -720,6 +720,28 @@
       border-top: 1px solid var(--border);
     }
 
+    .manual-consent-row {
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 12px;
+      margin-top: 12px;
+      color: #314047;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.35;
+      cursor: pointer;
+    }
+
+    .manual-consent-row input {
+      width: 20px;
+      height: 20px;
+      margin: 0;
+      flex: 0 0 auto;
+      accent-color: var(--green);
+      cursor: pointer;
+    }
+
     .toast-stack {
       position: fixed;
       right: 18px;
@@ -1203,9 +1225,9 @@
                     <label for="manualReference">Reference</label>
                     <input id="manualReference" type="text" placeholder="Physical shop / receipt / note" autocomplete="off">
                   </div>
-                  <label style="display:flex; align-items:flex-start; gap:8px; margin-top:10px;">
-                    <input id="manualConsent" type="checkbox">
+                  <label class="manual-consent-row">
                     <span>Staff confirms this recipient gave permission to receive this SMS.</span>
+                    <input id="manualConsent" type="checkbox">
                   </label>
                 </div>
               </div>
