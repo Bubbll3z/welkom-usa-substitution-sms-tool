@@ -677,6 +677,49 @@
       border-color: #f0c2c2;
     }
 
+    .manual-mode-card {
+      margin-bottom: 14px;
+      padding: 13px;
+      border: 1px solid #cbd8d3;
+      border-radius: 8px;
+      background: #fbfdfc;
+    }
+
+    .manual-mode-toggle {
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      cursor: pointer;
+    }
+
+    .manual-mode-toggle input {
+      width: 16px;
+      height: 16px;
+      margin: 2px 0 0;
+    }
+
+    .manual-mode-title {
+      display: block;
+      color: #1f2a30;
+      font-size: 13px;
+      font-weight: 800;
+      line-height: 1.35;
+    }
+
+    .manual-mode-copy {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .manual-fields {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+
     .toast-stack {
       position: fixed;
       right: 18px;
@@ -1127,12 +1170,15 @@
                 <button id="templateButton" class="btn-outline" type="button">Use Template v</button>
               </div>
 
-              <div class="notice" style="margin-bottom:14px;">
-                <label style="display:flex; align-items:center; gap:8px; margin:0;">
+              <div class="manual-mode-card">
+                <label class="manual-mode-toggle" for="manualMode">
                   <input id="manualMode" type="checkbox">
-                  Manual physical-shop SMS
+                  <span>
+                    <span class="manual-mode-title">Send to a manually entered phone number</span>
+                    <span class="manual-mode-copy">Use this for physical-shop customers or other approved recipients who are not linked to a Shopify order. Staff must confirm the customer gave permission to receive this SMS.</span>
+                  </span>
                 </label>
-                <div id="manualFields" class="hidden" style="margin-top:12px;">
+                <div id="manualFields" class="manual-fields hidden">
                   <div class="search-row">
                     <div>
                       <label for="manualPhone">Recipient phone</label>
@@ -1808,7 +1854,7 @@
       els.sendReadiness.className = missing.length ? "notice warn" : "notice";
       els.sendReadiness.textContent = missing.length ? `Before sending, confirm: ${missing.join(", ")}.` : "Ready to send after final confirmation.";
       els.messageHelp.textContent = isManualMode()
-        ? `Manual SMS will be sent to ${els.manualPhone.value.trim() || "the typed phone number"}.`
+        ? `Manual mode: type the recipient phone number, confirm permission, apply the template, then review before sending.`
         : state.order?.customer?.redactedPhone ? `This message will be sent to ${state.order.customer.redactedPhone}` : "Select an order item to replace and a substitute item.";
     }
 
