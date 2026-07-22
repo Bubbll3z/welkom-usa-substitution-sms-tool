@@ -398,6 +398,41 @@ test("send supports a validated custom substitute title when Shopify search has 
   }
 });
 
+test("manual SMS requires consent confirmation, redacts phone, and stays in dry-run", async () => {
+  const cookie = await loginCookie();
+  const payload = {
+    phone: "+15551234567",
+    firstName: "Walk In",
+    unavailableItem: "Requested biscuits",
+    substituteItem: "Replacement biscuits",
+    reference: "physical-shop",
+    consentConfirmed: true,
+    message: "Welkom USA: Hi Walk In, Requested biscuits in order #physical-shop is unavailable. We can substitute it with Replacement biscuits. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.",
+    idempotencyKey: "manual-dry-run"
+  };
+
+  const blocked = await handler(event("/api/send-manual-sms", { ...payload, consentConfirmed: false }, { cookie }));
+  assert.equal(blocked.statusCode, 400);
+  assert.equal(JSON.parse(blocked.body).code, "CONSENT_CONFIRMATION_REQUIRED");
+
+  const invalidPhone = await handler(event("/api/send-manual-sms", { ...payload, phone: "5551234567" }, { cookie }));
+  assert.equal(invalidPhone.statusCode, 400);
+  assert.equal(JSON.parse(invalidPhone.body).code, "PHONE_INVALID");
+
+  const response = await handler(event("/api/send-manual-sms", payload, { cookie }));
+  assert.equal(response.statusCode, 200);
+  const body = JSON.parse(response.body);
+  assert.equal(body.success, true);
+  assert.equal(body.dryRun, true);
+  assert.equal(body.record.orderName, "Manual physical-shop");
+  assert.equal(body.record.customerPhoneRedacted, "+15*******67");
+  assert.doesNotMatch(response.body, /15551234567/);
+
+  const repeat = await handler(event("/api/send-manual-sms", payload, { cookie }));
+  assert.equal(repeat.statusCode, 200);
+  assert.equal(JSON.parse(repeat.body).idempotent, true);
+});
+
 test("send blocks missing consent, cancelled order, invalid line item, and unavailable substitute", async () => {
   const cookie = await loginCookie();
   const originalFetch = global.fetch;
@@ -445,6 +480,18 @@ test("history endpoint lists stored message records without secrets", async () =
   } finally {
     global.fetch = originalFetch;
   }
+});
+
+test("config diagnostics reports safe check names without secret values", async () => {
+  const blocked = await handler(event("/api/config-diagnostics", undefined, {}, "GET"));
+  assert.equal(blocked.statusCode, 401);
+  const cookie = await loginCookie();
+  const response = await handler(event("/api/config-diagnostics", undefined, { cookie }, "GET"));
+  assert.equal(response.statusCode, 200);
+  assert.doesNotMatch(response.body, /shpat_test|test123|12345678901234567890123456789012/);
+  const body = JSON.parse(response.body);
+  assert.equal(body.success, true);
+  assert.ok(body.diagnostics.checks.some((check) => check.name === "MESSAGE_STORAGE_PROVIDER"));
 });
 
 test("dashboard, backup and filtered history endpoints are protected and do not expose secrets", async () => {
@@ -648,11 +695,49 @@ test("blob initialization endpoint requires staff authentication and is idempote
   assert.equal(first.statusCode, 200);
   const firstBody = JSON.parse(first.body);
   assert.equal(firstBody.success, true);
-  assert.equal(firstBody.stores.history, "welkom-sms-history");
+  assert.equal(firstBody.stores["welkom-sms-history"], "initialized");
+  assert.equal(firstBody.stores["welkom-sms-templates"], "initialized");
+  assert.equal(firstBody.stores["welkom-sms-audit"], "initialized");
+  assert.equal(firstBody.stores["welkom-sms-settings"], "initialized");
 
   const second = await handler(event("/api/admin/init-blobs", {}, { cookie }, "POST"));
   assert.equal(second.statusCode, 200);
   assert.equal(JSON.parse(second.body).success, true);
+});
+
+test("blob initialization failures return safe structured diagnostics", async () => {
+  const cookie = await loginCookie();
+  process.env.BLOB_INIT_ENABLED = "true";
+  process.env.MESSAGE_STORAGE_PROVIDER = "netlify-blobs";
+  setStoreFactory((name) => ({
+    async list() {
+      return { blobs: [] };
+    },
+    async get() {
+      return null;
+    },
+    async setJSON(key) {
+      if (name === "welkom-sms-settings" && key.startsWith("settings/")) {
+        const error = new Error("protected token value should not be shown");
+        error.code = "SIMULATED_STORAGE_ERROR";
+        throw error;
+      }
+    }
+  }));
+  try {
+    const response = await handler(event("/api/admin/init-blobs", {}, { cookie }, "POST"));
+    assert.equal(response.statusCode, 500);
+    const body = JSON.parse(response.body);
+    assert.equal(body.code, "STORAGE_ERROR");
+    assert.equal(body.diagnostic.stage, "settings-first-write");
+    assert.equal(body.diagnostic.storeName, "welkom-sms-settings");
+    assert.equal(body.diagnostic.recordType, "settings");
+    assert.equal(body.diagnostic.errorCode, "SIMULATED_STORAGE_ERROR");
+    assert.doesNotMatch(response.body, /protected token value should not be shown/);
+  } finally {
+    process.env.MESSAGE_STORAGE_PROVIDER = "memory";
+    resetStoreFactory();
+  }
 });
 
 test("Twilio status callback validates signatures", async () => {
