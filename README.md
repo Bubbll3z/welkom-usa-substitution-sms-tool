@@ -48,6 +48,8 @@ Open [http://localhost:3000](http://localhost:3000) or the port shown by the dev
 
 ## Netlify Deployment
 
+Connect this GitHub repository to Netlify, then use:
+
 Netlify settings:
 
 ```text
@@ -57,6 +59,8 @@ Functions directory: netlify/functions
 ```
 
 `netlify.toml` already includes these settings and routes `/api/*` requests to the Netlify Function.
+
+After every GitHub push, Netlify can build the latest committed version automatically if the site is connected to this repository.
 
 ## Required Environment Variables
 
@@ -86,12 +90,15 @@ TWILIO_PHONE_NUMBER=
 TWILIO_FROM_NUMBER=
 TWILIO_MESSAGING_SERVICE_SID=
 TWILIO_STATUS_CALLBACK_BASE_URL=
+PUBLIC_APP_URL=https://your-netlify-site.netlify.app
 
 MESSAGE_STORAGE_PROVIDER=netlify-blobs
 BLOB_INIT_ENABLED=true
+SUBSTITUTION_TOKEN_PEPPER=
 ```
 
 `SESSION_SECRET` must be at least 32 random characters. For new Shopify Dev Dashboard apps, set `SHOPIFY_CLIENT_ID` and `SHOPIFY_CLIENT_SECRET`; the app automatically requests and refreshes the 24-hour Admin API token server-side. `SHOPIFY_ADMIN_ACCESS_TOKEN` is only a fallback for older apps where Shopify directly provided a token. Use either Twilio Auth Token auth or API Key auth. Use either a Twilio sender phone number/from number or a Messaging Service SID.
+`PUBLIC_APP_URL` should be the deployed Netlify site URL so customer response links open the production app. `SUBSTITUTION_TOKEN_PEPPER` is optional but recommended; if omitted, the app uses `SESSION_SECRET` when hashing customer response tokens.
 
 For temporary internal testing only, set `REQUIRE_LOGIN=false` to hide the staff password screen and allow the app to open directly. Set it back to `true` before wider staff use.
 
@@ -193,6 +200,7 @@ welkom-sms-history
 welkom-sms-templates
 welkom-sms-audit
 welkom-sms-settings
+welkom-sms-substitution-requests
 ```
 
 These stores are created automatically by Netlify after the first successful write. There is no separate Blob ID to create. In deployed Netlify Functions the app uses automatic credentials with `getStore("store-name")`.
@@ -203,8 +211,51 @@ Only safe operational data is stored in Blobs:
 - template records
 - audit records
 - non-secret settings
+- secure substitution request records with redacted customer details and hashed response tokens
 
 Never store Shopify access tokens, Twilio Auth Tokens, staff passwords, session secrets, cookies, authorization headers, complete customer addresses, or unredacted customer phone numbers in Blobs.
+
+## Secure Customer Response Links
+
+Staff can create a customer substitution request instead of sending the older direct approval SMS. The app stores only the unavailable order items and staff-approved substitute choices, then sends this SMS:
+
+```text
+Welkom USA: An item in order #[ORDER NUMBER] is unavailable. Choose a substitute or refund here: [SECURE LINK]. Reply HELP for help or STOP to opt out.
+```
+
+The customer link opens `/respond/:token`. Customers can choose an approved substitute, refund, ask staff to choose, or ask staff to contact them. The public page never shows Shopify IDs, full phone numbers, full addresses, Twilio credentials, Shopify tokens, staff passwords, session data, or raw order responses. Customer choices are saved for staff review only; the app does not modify Shopify orders.
+
+## How Staff Use The App
+
+### Standard Shopify substitution SMS
+
+1. Log in with the staff password.
+2. Open **Search Order**.
+3. Search the exact Shopify order number, for example `1023` or `#1023`.
+4. Confirm the customer details and SMS consent.
+5. Select the unavailable order item.
+6. Search for and select the substitute product.
+7. Review or edit the SMS.
+8. Send only after confirming the message is correct.
+
+### Secure customer choice link
+
+1. Search and load the Shopify order.
+2. Select the unavailable item.
+3. Search for approved substitute products.
+4. Add up to three approved substitute choices to **Customer Substitution Request**.
+5. Choose the expiry time, normally 48 hours.
+6. Send the secure link SMS.
+7. Open **Requests** later to see whether the customer opened or submitted their choices.
+8. Review the customer's choice before manually updating the Shopify order.
+
+### Manual physical-shop SMS
+
+1. Use this only when the customer is not linked to a Shopify order.
+2. Enter the phone number in international format, for example `+12125551234`.
+3. Fill in the customer name, unavailable item, substitute item and reference.
+4. Tick the permission checkbox only if the customer gave permission to receive the SMS.
+5. Review and send the message.
 
 ### First Blob Write
 
@@ -217,7 +268,7 @@ After deploying with `MESSAGE_STORAGE_PROVIDER=netlify-blobs` and `BLOB_INIT_ENA
 fetch("/api/admin/init-blobs", { method: "POST", credentials: "same-origin" }).then((r) => r.json())
 ```
 
-3. Confirm the response includes the four store names.
+3. Confirm the response includes the Blob store names.
 4. Set `BLOB_INIT_ENABLED=false` in Netlify environment variables and redeploy.
 
 The initialization endpoint is authenticated, idempotent, creates the default substitution template only when templates are empty, and does not overwrite existing data.
@@ -259,7 +310,7 @@ Manual checks before real SMS:
 - `BLOB_INIT_ENABLED=true` is used only for the first authenticated Blob initialization.
 - `/api/admin/init-blobs` has been called once while logged in.
 - `BLOB_INIT_ENABLED=false` is set after initialization.
-- The four Blob stores appear in Netlify after first writes.
+- The Blob stores appear in Netlify after first writes.
 - Dry-run sends persist in Sent Messages across redeploys.
 - Duplicate-send protection works after a redeploy.
 - `DRY_RUN` and `SMS_DRY_RUN` stay `true` until a manager approves one company-controlled live SMS test.

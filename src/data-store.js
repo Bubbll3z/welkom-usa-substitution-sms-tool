@@ -8,7 +8,8 @@ const STORE_NAMES = {
   history: "welkom-sms-history",
   templates: "welkom-sms-templates",
   audit: "welkom-sms-audit",
-  settings: "welkom-sms-settings"
+  settings: "welkom-sms-settings",
+  requests: "welkom-sms-substitution-requests"
 };
 
 const INIT_STATUS = {
@@ -34,7 +35,8 @@ const memoryStores = {
   history: new Map(),
   templates: new Map(),
   audit: new Map(),
-  settings: new Map()
+  settings: new Map(),
+  requests: new Map()
 };
 
 let storeFactory = null;
@@ -99,6 +101,15 @@ function newId(prefix) {
   return `${prefix}_${crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex")}`;
 }
 
+function createResponseToken() {
+  return crypto.randomBytes(32).toString("base64url");
+}
+
+function hashResponseToken(token, env = process.env) {
+  const pepper = String(env.SUBSTITUTION_TOKEN_PEPPER || env.SESSION_SECRET || "");
+  return crypto.createHash("sha256").update(`${pepper}:${String(token || "")}`).digest("hex");
+}
+
 function hashIdempotency(parts) {
   return crypto.createHash("sha256").update(parts.filter(Boolean).join("|")).digest("hex");
 }
@@ -139,9 +150,28 @@ function scrubObject(value) {
   return value;
 }
 
+function scrubCustomerText(value, max = 240) {
+  return scrubText(String(value || "").trim().replace(/\s+/g, " ").replace(/<\/?[a-z][\s\S]*>/gi, "")).slice(0, max);
+}
+
 async function getJsonSafe(targetStore, key) {
   const raw = await targetStore.get(key, { type: "json", consistency: "strong" }).catch(() => null);
   return safeJson(raw);
+}
+
+function parseMoneyValue(value) {
+  const match = String(value || "").match(/(-?\d+(?:\.\d+)?)/);
+  return match ? Number(match[1]) : 0;
+}
+
+function currencyFromMoney(value, fallback = "USD") {
+  const match = String(value || "").match(/^([A-Z]{3})\s/);
+  return match ? match[1] : fallback;
+}
+
+function priceDifference(originalPrice, substitutePrice) {
+  const diff = parseMoneyValue(substitutePrice) - parseMoneyValue(originalPrice);
+  return Number.isFinite(diff) ? Number(diff.toFixed(2)) : 0;
 }
 
 async function setJson(targetStore, key, value, options = {}) {
@@ -206,6 +236,339 @@ function publicRecord(record) {
     dryRun: record.dryRun,
     failureReason: scrubText(record.failureReason),
     idempotencyKey: record.idempotencyKey
+  };
+}
+
+function requestStatus(record, at = Date.now()) {
+  if (!record) return "invalid";
+  if (record.revokedAt) return "revoked";
+  if (record.completedAt || record.status === "completed") return "completed";
+  if (record.submittedAt || record.status === "customer_responded") return "customer_responded";
+  if (record.expiresAt && new Date(record.expiresAt).getTime() <= at) return "expired";
+  if (record.openedAt || record.status === "opened") return "opened";
+  return record.status || "awaiting_customer";
+}
+
+function safeRequestForStaff(record, includeToken = false) {
+  if (!record) return null;
+  const status = requestStatus(record);
+  return {
+    schemaVersion: record.schemaVersion || SCHEMA_VERSION,
+    requestId: record.requestId,
+    orderNumber: scrubText(record.orderNumber),
+    customerFirstName: scrubText(record.customerFirstName),
+    customerPhoneRedacted: record.customerPhoneRedacted,
+    store: record.store,
+    status,
+    items: scrubObject(record.items || []),
+    staffNote: scrubText(record.staffNote),
+    createdBy: scrubText(record.createdBy),
+    createdAt: record.createdAt,
+    expiresAt: record.expiresAt,
+    openedAt: record.openedAt,
+    submittedAt: record.submittedAt,
+    completedAt: record.completedAt,
+    revokedAt: record.revokedAt,
+    sms: scrubObject(record.sms || {}),
+    audit: scrubObject(record.audit || []),
+    publicUrl: includeToken ? scrubText(record.publicUrl || "") : "",
+    submittedChoices: scrubObject(record.submittedChoices || [])
+  };
+}
+
+function safeRequestForCustomer(record) {
+  if (!record) return null;
+  const status = requestStatus(record);
+  const safeItems = (record.items || []).map((item) => ({
+    requestItemId: item.requestItemId,
+    originalTitle: scrubText(item.originalTitle),
+    originalImageUrl: item.originalImageUrl || "",
+    originalPrice: item.originalPrice || "",
+    currency: item.currency || currencyFromMoney(item.originalPrice),
+    quantity: item.quantity,
+    staffNote: scrubText(item.staffNote || record.staffNote || ""),
+    substituteOptions: (item.substituteOptions || []).map((option) => ({
+      optionId: option.optionId,
+      productTitle: scrubText(option.productTitle),
+      variantTitle: scrubText(option.variantTitle),
+      sku: scrubText(option.sku),
+      imageUrl: option.imageUrl || "",
+      price: option.price || "",
+      priceDifference: option.priceDifference,
+      availableQuantityAtCreation: option.availableQuantityAtCreation
+    })),
+    customerChoice: item.customerChoice || null
+  }));
+  return {
+    requestId: record.requestId,
+    orderNumber: scrubText(record.orderNumber),
+    maskedOrderReference: record.orderNumber ? `order #${String(record.orderNumber).replace(/^#/, "")}` : "your order",
+    customerFirstName: scrubText(record.customerFirstName),
+    status,
+    expiresAt: record.expiresAt,
+    openedAt: record.openedAt,
+    submittedAt: record.submittedAt,
+    revokedAt: record.revokedAt,
+    completedAt: record.completedAt,
+    staffNote: scrubText(record.staffNote),
+    items: safeItems,
+    submittedChoices: scrubObject(record.submittedChoices || [])
+  };
+}
+
+function appendRequestAudit(record, type, actor = "system", details = {}) {
+  const audit = Array.isArray(record.audit) ? record.audit : [];
+  return {
+    ...record,
+    audit: [
+      ...audit,
+      {
+        eventType: scrubText(type, 80),
+        timestamp: nowIso(),
+        actor: scrubText(actor, 120),
+        details: scrubObject(details)
+      }
+    ].slice(-100)
+  };
+}
+
+function validateSubstitutionRequestInput(data) {
+  if (!data || typeof data !== "object") return { ok: false, code: "INVALID_REQUEST", error: "Request is invalid." };
+  if (!data.shopifyOrderId || !data.orderNumber || !data.customerPhoneRedacted || !data.customerPhoneHash) {
+    return { ok: false, code: "INVALID_REQUEST", error: "Order and customer contact details are required." };
+  }
+  const items = Array.isArray(data.items) ? data.items : [];
+  if (!items.length) return { ok: false, code: "INVALID_REQUEST", error: "At least one unavailable item is required." };
+  if (items.length > 10) return { ok: false, code: "INVALID_REQUEST", error: "Too many unavailable items in one request." };
+  for (const item of items) {
+    if (!item.originalLineItemId || !item.originalTitle || !Number(item.quantity)) {
+      return { ok: false, code: "INVALID_REQUEST", error: "Each unavailable item needs a title and quantity." };
+    }
+    const options = Array.isArray(item.substituteOptions) ? item.substituteOptions : [];
+    if (options.length > 3) return { ok: false, code: "INVALID_REQUEST", error: "Each item can have up to three substitute options." };
+    const seen = new Set();
+    for (const option of options) {
+      if (!option.variantId || seen.has(option.variantId)) return { ok: false, code: "INVALID_REQUEST", error: "Duplicate or invalid substitute option." };
+      seen.add(option.variantId);
+      if (!option.productTitle || !option.price) return { ok: false, code: "INVALID_REQUEST", error: "Each substitute needs a title and price." };
+    }
+  }
+  return { ok: true };
+}
+
+async function createSubstitutionRequest(data, env = process.env) {
+  const validation = validateSubstitutionRequestInput(data);
+  if (!validation.ok) return validation;
+  const token = data.token || createResponseToken();
+  const tokenHash = hashResponseToken(token, env);
+  const now = nowIso();
+  const expiresAt = data.expiresAt || new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+  const requestId = data.requestId || newId("req");
+  const baseUrl = String(data.baseUrl || env.PUBLIC_APP_URL || env.URL || "").replace(/\/$/, "");
+  const record = appendRequestAudit({
+    schemaVersion: SCHEMA_VERSION,
+    requestId,
+    tokenHash,
+    shopifyOrderId: data.shopifyOrderId,
+    orderNumber: String(data.orderNumber || "").replace(/^#/, ""),
+    customerFirstName: scrubCustomerText(data.customerFirstName, 80),
+    customerPhoneHash: data.customerPhoneHash,
+    customerPhoneRedacted: data.customerPhoneRedacted,
+    store: "welkom-usa",
+    status: data.status || "awaiting_customer",
+    items: data.items.map((item) => ({
+      requestItemId: item.requestItemId || newId("item"),
+      originalLineItemId: item.originalLineItemId,
+      originalVariantId: item.originalVariantId || "",
+      originalTitle: scrubCustomerText(item.originalTitle, 160),
+      originalImageUrl: item.originalImageUrl || "",
+      originalPrice: item.originalPrice || "",
+      currency: item.currency || currencyFromMoney(item.originalPrice),
+      quantity: Number(item.quantity || 1),
+      staffNote: scrubCustomerText(item.staffNote || "", 180),
+      substituteOptions: (item.substituteOptions || []).slice(0, 3).map((option) => ({
+        optionId: option.optionId || newId("opt"),
+        variantId: option.variantId,
+        productTitle: scrubCustomerText(option.productTitle, 160),
+        variantTitle: scrubCustomerText(option.variantTitle, 120),
+        sku: scrubCustomerText(option.sku, 80),
+        imageUrl: option.imageUrl || "",
+        price: option.price || "",
+        originalPrice: item.originalPrice || "",
+        priceDifference: priceDifference(item.originalPrice, option.price),
+        availableQuantityAtCreation: Number.isFinite(option.availableQuantityAtCreation) ? option.availableQuantityAtCreation : null,
+        quantity: Number(option.quantity || item.quantity || 1),
+        staffNote: scrubCustomerText(option.staffNote || "", 120)
+      })),
+      customerChoice: null
+    })),
+    staffNote: scrubCustomerText(data.staffNote || "", 240),
+    createdBy: scrubCustomerText(data.createdBy || "staff", 120),
+    createdAt: data.createdAt || now,
+    updatedAt: data.updatedAt || now,
+    expiresAt,
+    openedAt: null,
+    submittedAt: null,
+    completedAt: null,
+    revokedAt: null,
+    sms: data.sms || {},
+    publicUrl: baseUrl ? `${baseUrl}/respond/${token}` : `/respond/${token}`,
+    submittedChoices: []
+  }, "request_created", data.createdBy || "staff");
+
+  const targetStore = store("requests", env);
+  try {
+    await setJson(targetStore, `tokens/${tokenHash}`, { schemaVersion: SCHEMA_VERSION, requestId, createdAt: now }, { onlyIfNew: true });
+    await setJson(targetStore, `requests/${requestId}`, record, { onlyIfNew: true });
+    await createAuditRecord({ type: "substitution_request_created", actor: record.createdBy, details: { requestId, orderNumber: record.orderNumber } }, env);
+    return {
+      ok: true,
+      token,
+      publicUrl: baseUrl ? `${baseUrl}/respond/${token}` : `/respond/${token}`,
+      request: safeRequestForStaff(record, true),
+      record
+    };
+  } catch (error) {
+    return { ok: false, code: "STORAGE_ERROR", error: "Substitution request could not be saved." };
+  }
+}
+
+async function getSubstitutionRequest(id, env = process.env) {
+  if (!id || !/^[A-Za-z0-9_-]+$/.test(String(id))) return null;
+  const record = await getJsonSafe(store("requests", env), `requests/${id}`);
+  return record?.requestId ? record : null;
+}
+
+async function getSubstitutionRequestByToken(token, env = process.env) {
+  if (!token || !/^[A-Za-z0-9_-]{32,}$/.test(String(token))) return null;
+  const tokenHash = hashResponseToken(token, env);
+  const pointer = await getJsonSafe(store("requests", env), `tokens/${tokenHash}`);
+  if (!pointer?.requestId) return null;
+  return getSubstitutionRequest(pointer.requestId, env);
+}
+
+async function saveSubstitutionRequest(record, env = process.env) {
+  if (!record?.requestId) return null;
+  const next = { ...record, status: requestStatus(record), updatedAt: nowIso() };
+  await setJson(store("requests", env), `requests/${next.requestId}`, next);
+  return next;
+}
+
+function validateCustomerChoices(record, choices) {
+  const byItem = new Map((record.items || []).map((item) => [item.requestItemId, item]));
+  const submitted = Array.isArray(choices) ? choices : [];
+  if (submitted.length !== byItem.size) {
+    return { ok: false, code: "INVALID_RESPONSE", error: "Please choose one option for each unavailable item." };
+  }
+  const cleanChoices = [];
+  const seen = new Set();
+  for (const choice of submitted) {
+    const item = byItem.get(choice.requestItemId);
+    if (!item || seen.has(choice.requestItemId)) return { ok: false, code: "INVALID_RESPONSE", error: "One of the selected items is invalid." };
+    seen.add(choice.requestItemId);
+    const type = String(choice.type || "").trim();
+    if (!["substitute", "refund", "store_choice", "contact"].includes(type)) {
+      return { ok: false, code: "INVALID_RESPONSE", error: "One of the selected choices is invalid." };
+    }
+    let selectedOption = null;
+    if (type === "substitute") {
+      selectedOption = (item.substituteOptions || []).find((option) => option.optionId === choice.optionId);
+      if (!selectedOption) return { ok: false, code: "INVALID_RESPONSE", error: "Selected substitute is not approved for this request." };
+    }
+    cleanChoices.push({
+      requestItemId: item.requestItemId,
+      originalTitle: item.originalTitle,
+      type,
+      optionId: selectedOption?.optionId || "",
+      productTitle: selectedOption?.productTitle || "",
+      variantTitle: selectedOption?.variantTitle || "",
+      price: selectedOption?.price || "",
+      priceDifference: selectedOption?.priceDifference ?? null,
+      note: scrubCustomerText(choice.note || "", 160)
+    });
+  }
+  return { ok: true, choices: cleanChoices };
+}
+
+async function markSubstitutionRequestOpened(token, env = process.env) {
+  const record = await getSubstitutionRequestByToken(token, env);
+  if (!record) return { ok: false, code: "REQUEST_NOT_FOUND", error: "This link is invalid or unavailable." };
+  const status = requestStatus(record);
+  if (status === "awaiting_customer") {
+    const opened = appendRequestAudit({ ...record, status: "opened", openedAt: record.openedAt || nowIso() }, "link_opened");
+    return { ok: true, record: await saveSubstitutionRequest(opened, env) };
+  }
+  return { ok: true, record };
+}
+
+async function submitSubstitutionResponse(token, choices, env = process.env) {
+  const record = await getSubstitutionRequestByToken(token, env);
+  if (!record) return { ok: false, status: 404, code: "REQUEST_UNAVAILABLE", error: "This request is not available." };
+  const status = requestStatus(record);
+  if (status === "expired") return { ok: false, status: 410, code: "REQUEST_EXPIRED", error: "This request has expired." };
+  if (status === "revoked") return { ok: false, status: 410, code: "REQUEST_REVOKED", error: "This request is no longer active." };
+  if (status === "completed") return { ok: false, status: 409, code: "REQUEST_COMPLETED", error: "This request has already been completed by staff." };
+  if (record.submittedAt) return { ok: false, status: 409, code: "ALREADY_SUBMITTED", error: "Your choices were already submitted." };
+  const validation = validateCustomerChoices(record, choices);
+  if (!validation.ok) return { ...validation, status: 400 };
+  const nextItems = record.items.map((item) => ({
+    ...item,
+    customerChoice: validation.choices.find((choice) => choice.requestItemId === item.requestItemId) || null
+  }));
+  const submitted = appendRequestAudit({
+    ...record,
+    status: "customer_responded",
+    submittedAt: nowIso(),
+    submittedChoices: validation.choices,
+    items: nextItems
+  }, "customer_response_submitted");
+  const saved = await saveSubstitutionRequest(submitted, env);
+  await createAuditRecord({ type: "customer_response_submitted", details: { requestId: saved.requestId, orderNumber: saved.orderNumber } }, env);
+  return { ok: true, record: saved };
+}
+
+async function updateSubstitutionRequestStatus(id, nextStatus, actor = "staff", env = process.env) {
+  const record = await getSubstitutionRequest(id, env);
+  if (!record) return { ok: false, code: "NOT_FOUND", error: "Substitution request was not found." };
+  const allowed = new Set(["staff_reviewing", "completed", "revoked"]);
+  if (!allowed.has(nextStatus)) return { ok: false, code: "INVALID_STATUS", error: "Unsupported request status." };
+  const now = nowIso();
+  const next = appendRequestAudit({
+    ...record,
+    status: nextStatus,
+    completedAt: nextStatus === "completed" ? now : record.completedAt,
+    revokedAt: nextStatus === "revoked" ? now : record.revokedAt
+  }, nextStatus === "revoked" ? "request_revoked" : nextStatus === "completed" ? "request_completed" : "staff_reviewing", actor);
+  const saved = await saveSubstitutionRequest(next, env);
+  await createAuditRecord({ type: `substitution_${nextStatus}`, actor, details: { requestId: id } }, env);
+  return { ok: true, request: safeRequestForStaff(saved) };
+}
+
+async function updateSubstitutionRequestSms(id, sms, actor = "system", env = process.env) {
+  const record = await getSubstitutionRequest(id, env);
+  if (!record) return null;
+  const next = appendRequestAudit({ ...record, sms: { ...(record.sms || {}), ...scrubObject(sms) } }, "request_sms_updated", actor);
+  return saveSubstitutionRequest(next, env);
+}
+
+async function listSubstitutionRequests(env = process.env, filters = {}) {
+  const limit = Math.min(Math.max(Number(filters.limit || 50), 1), 100);
+  const page = Math.max(Number(filters.page || 1), 1);
+  const includeLinks = Boolean(filters.includeLinks);
+  let records = await listRawByPrefix(store("requests", env), "requests/", 1000);
+  records = records.filter((record) => record.requestId).map((record) => ({ ...record, status: requestStatus(record) }));
+  const status = String(filters.status || "").trim();
+  if (status) records = records.filter((record) => record.status === status);
+  const query = String(filters.query || filters.search || "").trim().toLowerCase();
+  if (query) records = records.filter((record) => [record.orderNumber, record.customerFirstName, record.status].some((value) => String(value || "").toLowerCase().includes(query)));
+  records.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  const start = (page - 1) * limit;
+  return {
+    requests: records.slice(start, start + limit).map((record) => safeRequestForStaff(record, includeLinks)),
+    page,
+    limit,
+    total: records.length,
+    totalPages: Math.max(Math.ceil(records.length / limit), 1)
   };
 }
 
@@ -486,13 +849,18 @@ async function initializeDataStores(env = process.env) {
   }, "history-first-write", "history-initialization");
   stores[STORE_NAMES.templates] = await setJsonOnlyIfNew("templates", "templates/default-substitution", defaultTemplate(), "template-default-write", "template");
   stores[STORE_NAMES.settings] = await setJsonOnlyIfNew("settings", "settings/blob_initialization", safeInitializationSettings(initializedAt), "settings-first-write", "settings");
+  stores[STORE_NAMES.requests] = await setJsonOnlyIfNew("requests", "init/blob_initialization", {
+    schemaVersion: SCHEMA_VERSION,
+    initializedAt
+  }, "requests-first-write", "substitution-requests");
   try {
     await createAuditRecord({
       type: "blob_stores_initialized",
       details: {
         history: stores[STORE_NAMES.history],
         templates: stores[STORE_NAMES.templates],
-        settings: stores[STORE_NAMES.settings]
+        settings: stores[STORE_NAMES.settings],
+        requests: stores[STORE_NAMES.requests]
       }
     }, env);
     stores[STORE_NAMES.audit] = INIT_STATUS.initialized;
@@ -515,6 +883,7 @@ async function exportSafeBackup(env = process.env) {
     includes: ["messageHistoryRedacted", "templates", "audit", "nonSecretSettings"],
     excludes: ["secrets", "sessionCookies", "fullPhoneNumbers", "completeAddresses", "authorizationHeaders", "shopifyAccessTokens", "twilioAuthTokens"],
     messageHistory: await listMessageRecords(env, 1000),
+    substitutionRequests: (await listSubstitutionRequests(env, { limit: 1000 })).requests,
     templates: await listTemplates(env),
     audit: await listRawByPrefix(store("audit", env), "events/", 1000),
     settings: await listRawByPrefix(store("settings", env), "settings/", 100)
@@ -540,8 +909,10 @@ module.exports = {
   backupPayload,
   checkDuplicateMessage,
   clearMemoryHistory,
+  createResponseToken,
   createAuditRecord,
   createMessageRecord,
+  createSubstitutionRequest,
   createTemplate,
   defaultTemplate,
   duplicateKey,
@@ -549,10 +920,15 @@ module.exports = {
   findByIdempotency,
   findDuplicate,
   getMessageRecord,
+  getSubstitutionRequest,
+  getSubstitutionRequestByToken,
+  hashResponseToken,
   idempotencyKey,
   initializeDataStores,
   listMessageRecords,
+  listSubstitutionRequests,
   listTemplates,
+  markSubstitutionRequestOpened,
   messageStats,
   publicRecord,
   queryMessageRecords,
@@ -560,7 +936,12 @@ module.exports = {
   resetStoreFactory,
   saveRecord,
   saveTemplate,
+  safeRequestForCustomer,
+  safeRequestForStaff,
   setStoreFactory,
+  submitSubstitutionResponse,
+  updateSubstitutionRequestSms,
+  updateSubstitutionRequestStatus,
   updateMessageStatus,
   updateTemplate,
   validateTemplate

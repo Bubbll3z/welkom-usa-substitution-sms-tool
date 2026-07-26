@@ -25,6 +25,8 @@ If login fails, ask a manager to check the staff password in Netlify.
 
 ## Send a Shopify Order Substitution SMS
 
+Use this when staff already know the exact substitute and want to send the normal one-message approval SMS.
+
 1. Click **Search Order**.
 2. Type the Shopify order number, for example `1023` or `#1023`.
 3. Click **Search**.
@@ -42,6 +44,25 @@ The normal message format is:
 ```text
 Welkom USA: Hi [FIRST NAME], [UNAVAILABLE ITEM] in order #[ORDER NUMBER] is unavailable. We can substitute it with [SUBSTITUTE ITEM]. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.
 ```
+
+## Send a Secure Customer Choice Link
+
+Use this when the customer should choose between one or more approved substitutes, a refund, or asking staff to contact them.
+
+1. Click **Search Order**.
+2. Search the Shopify order number.
+3. Under **Unavailable Item**, select the item that cannot be sent.
+4. Under **Substitution Options**, search for each replacement product.
+5. Select up to three approved substitutes.
+6. In **Customer Substitution Request**, click **Add Approved Substitute**.
+7. Add a short staff note only if it helps the customer.
+8. Choose when the link should expire, usually 48 hours.
+9. Read the SMS preview.
+10. Click **Send Customer Request**.
+
+The customer receives a secure link. They can choose a substitute, refund, ask staff to choose, or ask staff to contact them. Staff must review the response before changing anything in Shopify.
+
+Use **Requests** to check whether the customer opened the link, replied, needs review, or whether the request expired.
 
 ## Manual Physical-Shop SMS
 
@@ -109,4 +130,3 @@ Important statuses:
 - Do not send the same substitution twice unless a manager confirms it.
 - Do not copy customer phone numbers into other tools.
 - Ask a manager before sending a real SMS if anything looks wrong.
-

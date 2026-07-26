@@ -742,6 +742,105 @@
       cursor: pointer;
     }
 
+    .request-builder,
+    .request-item,
+    .customer-response-card {
+      display: grid;
+      gap: 10px;
+    }
+
+    .request-item,
+    .customer-response-card {
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fbfdfc;
+    }
+
+    .option-pill-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+    }
+
+    .option-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 32px;
+      padding: 6px 9px;
+      border: 1px solid #cbe5da;
+      border-radius: 999px;
+      background: var(--green-soft);
+      color: var(--green);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .option-pill button {
+      min-height: 22px;
+      width: 22px;
+      padding: 0;
+      border-radius: 50%;
+      background: #ffffff;
+      color: var(--error);
+      font-size: 14px;
+      line-height: 1;
+    }
+
+    .customer-page {
+      min-height: 100vh;
+      background: #f7f8f8;
+      padding: 18px;
+    }
+
+    .customer-shell {
+      width: min(720px, 100%);
+      margin: 0 auto;
+      display: grid;
+      gap: 14px;
+    }
+
+    .customer-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 2px;
+    }
+
+    .choice-card {
+      display: grid;
+      grid-template-columns: 22px 54px minmax(0, 1fr);
+      gap: 10px;
+      align-items: center;
+      min-height: 72px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: #ffffff;
+      cursor: pointer;
+    }
+
+    .choice-card input {
+      width: 20px;
+      height: 20px;
+      accent-color: var(--green);
+    }
+
+    .choice-card.no-image {
+      grid-template-columns: 22px minmax(0, 1fr);
+    }
+
+    .review-summary {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+      border-radius: 8px;
+      background: var(--green-soft);
+      color: #26363b;
+      font-size: 12px;
+    }
+
     .toast-stack {
       position: fixed;
       right: 18px;
@@ -1072,6 +1171,7 @@
         <button class="nav-item active" type="button" id="searchNav"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg>Search Order</button>
         <button class="nav-item" type="button" id="dashboardNav"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 13h6v7H4zM14 4h6v16h-6zM4 4h6v5H4z"/></svg>Dashboard</button>
         <button class="nav-item" type="button" id="historyNav"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>Sent Messages</button>
+        <button class="nav-item" type="button" id="requestsNav"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>Requests</button>
         <button class="nav-item" type="button" id="templatesNav"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h10a2 2 0 0 1 2 2v16l-7-4-7 4V5a2 2 0 0 1 2-2z"/></svg>Templates</button>
         <button class="nav-item" type="button" id="settingsNav"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21h-4v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1-2.8-2.8.1-.1A1.7 1.7 0 0 0 4.6 15 1.7 1.7 0 0 0 3.1 14H3v-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 2.8-2.8.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.5V3h4v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1 2.8 2.8-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1h.1v4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
         <button class="nav-item" type="button" id="backupNav"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>Backup</button>
@@ -1168,6 +1268,37 @@
                 </div>
                 <div id="substitutions" class="sub-list"></div>
                 <button id="customSubButton" class="btn-outline" type="button" style="width:100%; margin-top:10px;">+ Add Custom Substitute</button>
+              </div>
+            </article>
+
+            <article class="card">
+              <div class="card-pad request-builder">
+                <div class="card-title">
+                  <h2>Customer Substitution Request</h2>
+                  <span id="requestBuilderState" class="fine">Secure link</span>
+                </div>
+                <p class="fine">Add up to three approved Shopify substitutes for each unavailable item. The customer will only see the choices you add here.</p>
+                <div class="search-row">
+                  <button id="addRequestOptionButton" class="btn-outline" type="button">Add Approved Option</button>
+                  <button id="clearRequestButton" class="btn-danger" type="button">Clear</button>
+                </div>
+                <div id="requestItemsList" class="request-builder"></div>
+                <div class="field">
+                  <label for="requestStaffNote">Short note for customer</label>
+                  <textarea id="requestStaffNote" style="min-height:82px;" maxlength="240" placeholder="Example: Please choose your preferred replacement so we can finish packing your order."></textarea>
+                </div>
+                <div class="search-row">
+                  <div>
+                    <label for="requestExpiry">Link expires after</label>
+                    <select id="requestExpiry">
+                      <option value="24">24 hours</option>
+                      <option value="48" selected>48 hours</option>
+                      <option value="72">72 hours</option>
+                    </select>
+                  </div>
+                  <button id="sendRequestButton" class="btn-primary" type="button">Send Link</button>
+                </div>
+                <div id="requestSmsPreview" class="notice">Secure-link SMS preview will appear after you add an approved option.</div>
               </div>
             </article>
 
@@ -1339,6 +1470,41 @@
           </article>
         </section>
 
+        <section id="requestsPage" class="page-view page-stack hidden" aria-label="Substitution requests">
+          <article class="card">
+            <div class="card-pad">
+              <div class="card-title">
+                <div>
+                  <h2>Substitution Requests</h2>
+                  <p class="supporting">Review secure customer choice links and responses.</p>
+                </div>
+                <button id="requestsRefreshButton" class="btn-outline" type="button">Refresh</button>
+              </div>
+              <div class="toolbar" style="grid-template-columns:minmax(180px,1fr) 180px auto;">
+                <div>
+                  <label for="requestsSearch">Search</label>
+                  <input id="requestsSearch" type="search" placeholder="Order, customer or status">
+                </div>
+                <div>
+                  <label for="requestsStatus">Status</label>
+                  <select id="requestsStatus">
+                    <option value="">All</option>
+                    <option value="awaiting_customer">Awaiting customer</option>
+                    <option value="opened">Opened</option>
+                    <option value="customer_responded">Customer responded</option>
+                    <option value="expired">Expired</option>
+                    <option value="completed">Completed</option>
+                    <option value="revoked">Revoked</option>
+                  </select>
+                </div>
+                <button id="requestsResetButton" class="btn-soft" type="button">Reset</button>
+              </div>
+              <div id="requestsList" class="table-list"></div>
+              <p id="requestsPager" class="fine"></p>
+            </div>
+          </article>
+        </section>
+
         <section id="templatesPage" class="page-view page-stack hidden" aria-label="Templates">
           <article class="card">
             <div class="card-pad">
@@ -1408,6 +1574,24 @@
           </article>
         </section>
 
+        <section id="respondPage" class="page-view hidden" aria-label="Customer response">
+          <div class="customer-page">
+            <div class="customer-shell">
+              <div class="customer-brand">
+                <span class="brand-logo">WE</span>
+                <div><strong>Welkom USA</strong><small class="fine" style="display:block;">Substitution request</small></div>
+              </div>
+              <article class="card">
+                <div class="card-pad">
+                  <h1 style="font-size:24px;">Choose what you would prefer</h1>
+                  <p id="respondIntro" class="supporting">Loading your request...</p>
+                </div>
+              </article>
+              <div id="respondContent" class="customer-shell"></div>
+            </div>
+          </div>
+        </section>
+
         <p class="footer">Messages are sent via Twilio. STOP to opt out. HELP for help.</p>
       </main>
     </div>
@@ -1436,9 +1620,11 @@
       searchPage: document.getElementById("searchPage"),
       dashboardPage: document.getElementById("dashboardPage"),
       sentPage: document.getElementById("sentPage"),
+      requestsPage: document.getElementById("requestsPage"),
       templatesPage: document.getElementById("templatesPage"),
       settingsPage: document.getElementById("settingsPage"),
       backupPage: document.getElementById("backupPage"),
+      respondPage: document.getElementById("respondPage"),
       loginPasswordField: document.getElementById("loginPasswordField"),
       loginActions: document.getElementById("loginActions"),
       password: document.getElementById("password"),
@@ -1455,6 +1641,14 @@
       subSearchButton: document.getElementById("subSearchButton"),
       subSearchState: document.getElementById("subSearchState"),
       customSubButton: document.getElementById("customSubButton"),
+      requestBuilderState: document.getElementById("requestBuilderState"),
+      addRequestOptionButton: document.getElementById("addRequestOptionButton"),
+      clearRequestButton: document.getElementById("clearRequestButton"),
+      requestItemsList: document.getElementById("requestItemsList"),
+      requestStaffNote: document.getElementById("requestStaffNote"),
+      requestExpiry: document.getElementById("requestExpiry"),
+      sendRequestButton: document.getElementById("sendRequestButton"),
+      requestSmsPreview: document.getElementById("requestSmsPreview"),
       manualMode: document.getElementById("manualMode"),
       manualFields: document.getElementById("manualFields"),
       manualPhone: document.getElementById("manualPhone"),
@@ -1483,6 +1677,7 @@
       clearHistoryButton: document.getElementById("clearHistoryButton"),
       historyShortcut: document.getElementById("historyShortcut"),
       historyNav: document.getElementById("historyNav"),
+      requestsNav: document.getElementById("requestsNav"),
       searchNav: document.getElementById("searchNav"),
       dashboardNav: document.getElementById("dashboardNav"),
       templatesNav: document.getElementById("templatesNav"),
@@ -1500,6 +1695,12 @@
       historyResetButton: document.getElementById("historyResetButton"),
       sentHistoryList: document.getElementById("sentHistoryList"),
       historyPager: document.getElementById("historyPager"),
+      requestsRefreshButton: document.getElementById("requestsRefreshButton"),
+      requestsResetButton: document.getElementById("requestsResetButton"),
+      requestsSearch: document.getElementById("requestsSearch"),
+      requestsStatus: document.getElementById("requestsStatus"),
+      requestsList: document.getElementById("requestsList"),
+      requestsPager: document.getElementById("requestsPager"),
       templateList: document.getElementById("templateList"),
       templateName: document.getElementById("templateName"),
       templateBody: document.getElementById("templateBody"),
@@ -1516,7 +1717,9 @@
       diagnosticsList: document.getElementById("diagnosticsList"),
       backupInfo: document.getElementById("backupInfo"),
       exportJsonButton: document.getElementById("exportJsonButton"),
-      exportCsvButton: document.getElementById("exportCsvButton")
+      exportCsvButton: document.getElementById("exportCsvButton"),
+      respondIntro: document.getElementById("respondIntro"),
+      respondContent: document.getElementById("respondContent")
     };
 
     const TEMPLATE = "Welkom USA: Hi [FIRST NAME], [UNAVAILABLE ITEM] in order #[ORDER NUMBER] is unavailable. We can substitute it with [SUBSTITUTE ITEM]. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.";
@@ -1529,6 +1732,8 @@
       order: null,
       unavailableItem: null,
       substituteItem: null,
+      requestItems: [],
+      customerRequest: null,
       manualMode: false,
       authRequired: true,
       authorizedResend: false,
@@ -1536,6 +1741,8 @@
       currentPage: "search",
       historyPage: 1,
       historyLimit: 25,
+      requestsPage: 1,
+      requestsLimit: 25,
       selectedTemplate: null,
       templates: []
     };
@@ -1612,6 +1819,13 @@
         description: "Review dry-run and live SMS audit history.",
         path: "/sent"
       },
+      requests: {
+        node: els.requestsPage,
+        nav: els.requestsNav,
+        title: "Substitution Requests",
+        description: "Review secure customer choice links and responses.",
+        path: "/requests"
+      },
       templates: {
         node: els.templatesPage,
         nav: els.templatesNav,
@@ -1632,10 +1846,18 @@
         title: "Backup",
         description: "Export local audit data for backup or review.",
         path: "/backup"
+      },
+      respond: {
+        node: els.respondPage,
+        nav: els.searchNav,
+        title: "Customer Response",
+        description: "Secure customer substitution choice page.",
+        path: "/respond"
       }
     };
 
     function pageFromPath(pathname) {
+      if (pathname.startsWith("/respond/")) return "respond";
       return Object.entries(pages).find(([, page]) => page.path === pathname)?.[0] || "search";
     }
 
@@ -1657,11 +1879,18 @@
         window.history.pushState({ page: state.currentPage }, "", page.path);
       }
       document.querySelector(".content").scrollIntoView({ behavior: "smooth", block: "start" });
+      if (state.currentPage !== "respond") {
+        document.querySelector(".layout").style.display = "";
+        document.querySelector(".sidebar").classList.remove("hidden");
+        document.querySelector(".topbar").classList.remove("hidden");
+      }
 
       if (state.currentPage === "dashboard") await loadDashboard();
       if (state.currentPage === "sent") await loadSentMessages();
+      if (state.currentPage === "requests") await loadSubstitutionRequests();
       if (state.currentPage === "templates") await loadTemplates();
       if (state.currentPage === "settings") await loadSettings();
+      if (state.currentPage === "respond") await loadCustomerResponse();
     }
 
     async function api(path, options = {}) {
@@ -1893,6 +2122,8 @@
       els.lineItems.append(el("div", "empty", "Search an order first."));
       clear(els.substitutions);
       els.substitutions.append(el("div", "empty", "Select an order item to review substitution options."));
+      state.requestItems = [];
+      renderRequestBuilder();
       updateConsentBadge();
     }
 
@@ -1900,6 +2131,7 @@
       state.order = order;
       state.unavailableItem = null;
       state.substituteItem = null;
+      state.requestItems = [];
       state.authorizedResend = false;
       els.message.value = "";
 
@@ -1922,6 +2154,7 @@
       renderLineItems(order.lineItems || []);
       clear(els.substitutions);
       els.substitutions.append(el("div", "empty", "Select an order item to load Shopify substitution suggestions."));
+      renderRequestBuilder();
       updateConsentBadge();
       updateMessageState();
       if (order.cancelled) toast("error", "This order is cancelled, so messaging is disabled.");
@@ -2113,6 +2346,117 @@
       fillTemplate();
       checkDuplicate();
       toast("success", "Custom substitute added. Please review the SMS before sending.");
+    }
+
+    function moneyNumber(value) {
+      const match = String(value || "").match(/(-?\d+(?:\.\d+)?)/);
+      return match ? Number(match[1]) : 0;
+    }
+
+    function priceDiffLabel(original, substitute) {
+      const currency = String(substitute || original || "").match(/^([A-Z]{3})\s/)?.[1] || "";
+      const diff = moneyNumber(substitute) - moneyNumber(original);
+      if (Math.abs(diff) < 0.005) return "Same price";
+      return `${currency ? `${currency} ` : ""}${Math.abs(diff).toFixed(2)} ${diff > 0 ? "more" : "less"}`;
+    }
+
+    function secureRequestSmsPreview() {
+      if (!state.order || !state.requestItems.length) return "Secure-link SMS preview will appear after you add an approved option.";
+      return `Welkom USA: An item in order #${orderNumberClean()} is unavailable. Choose a substitute or refund here: [secure link]. Reply HELP for help or STOP to opt out.`;
+    }
+
+    function renderRequestBuilder() {
+      if (!els.requestItemsList) return;
+      clear(els.requestItemsList);
+      els.requestSmsPreview.textContent = secureRequestSmsPreview();
+      els.requestBuilderState.textContent = state.requestItems.length ? `${state.requestItems.length} item${state.requestItems.length === 1 ? "" : "s"}` : "Secure link";
+      if (!state.requestItems.length) {
+        els.requestItemsList.append(el("div", "empty", "Select an unavailable item and a Shopify substitute, then click Add Approved Option."));
+        return;
+      }
+      state.requestItems.forEach((item) => {
+        const card = el("div", "request-item");
+        card.append(el("strong", "", `${item.originalTitle} · quantity ${item.quantity}`));
+        const options = el("div", "option-pill-list");
+        item.substituteVariantIds.forEach((variantId) => {
+          const option = item.options.find((entry) => entry.id === variantId);
+          const pill = el("span", "option-pill");
+          pill.append(el("span", "", `${option?.title || "Substitute"} · ${priceDiffLabel(item.originalPrice, option?.price)}`));
+          const remove = el("button", "", "×");
+          remove.type = "button";
+          remove.addEventListener("click", () => {
+            item.substituteVariantIds = item.substituteVariantIds.filter((id) => id !== variantId);
+            item.options = item.options.filter((entry) => entry.id !== variantId);
+            state.requestItems = state.requestItems.filter((entry) => entry.substituteVariantIds.length);
+            renderRequestBuilder();
+          });
+          pill.append(remove);
+          options.append(pill);
+        });
+        card.append(options);
+        els.requestItemsList.append(card);
+      });
+    }
+
+    function addApprovedRequestOption() {
+      if (!state.order) return toast("error", "Search an order first.");
+      if (!state.unavailableItem) return toast("error", "Select the unavailable item first.");
+      if (!state.substituteItem || state.substituteItem.customSubstitute) return toast("error", "Select a Shopify substitute option first.");
+      let item = state.requestItems.find((entry) => entry.lineItemId === state.unavailableItem.id);
+      if (!item) {
+        item = {
+          lineItemId: state.unavailableItem.id,
+          originalTitle: state.unavailableItem.title,
+          originalPrice: state.unavailableItem.price,
+          quantity: state.unavailableItem.quantity || 1,
+          substituteVariantIds: [],
+          options: []
+        };
+        state.requestItems.push(item);
+      }
+      if (item.substituteVariantIds.includes(state.substituteItem.id)) return toast("error", "That substitute is already added for this item.");
+      if (item.substituteVariantIds.length >= 3) return toast("error", "Each item can have up to three approved substitutes.");
+      item.substituteVariantIds.push(state.substituteItem.id);
+      item.options.push({ ...state.substituteItem });
+      renderRequestBuilder();
+      toast("success", "Approved substitute added to the customer request.");
+    }
+
+    function clearRequestBuilder() {
+      state.requestItems = [];
+      els.requestStaffNote.value = "";
+      renderRequestBuilder();
+    }
+
+    async function sendCustomerRequest() {
+      if (!state.authenticated) return toast("error", "Please log in first.");
+      if (!state.order) return toast("error", "Search an order first.");
+      if (!state.order.smsConsent?.granted) return toast("error", "This order does not have recorded SMS consent.");
+      if (!state.requestItems.length) return toast("error", "Add at least one approved substitute option.");
+      els.sendRequestButton.disabled = true;
+      try {
+        const result = await api("/api/substitution-requests", {
+          method: "POST",
+          body: JSON.stringify({
+            orderId: state.order.id,
+            expiryHours: Number(els.requestExpiry.value || 48),
+            staffNote: els.requestStaffNote.value,
+            items: state.requestItems.map((item) => ({
+              lineItemId: item.lineItemId,
+              quantity: item.quantity,
+              substituteVariantIds: item.substituteVariantIds
+            })),
+            idempotencyKey: `customer-request|${state.order.id}|${Date.now()}`
+          })
+        });
+        toast("success", result.dryRun ? "Dry-run secure link created. No real SMS was sent." : "Secure link SMS sent.");
+        els.requestSmsPreview.textContent = result.publicUrl ? `Link created: ${result.publicUrl}` : result.message || "Request created.";
+        await loadSubstitutionRequests();
+      } catch (error) {
+        toast("error", error.message);
+      } finally {
+        els.sendRequestButton.disabled = false;
+      }
     }
 
     function insertToken(token) {
@@ -2315,6 +2659,214 @@
       row.append(main);
       row.append(el("span", item.dryRun ? "badge warn" : "badge", item.dryRun ? "Dry run" : "Live"));
       return row;
+    }
+
+    function requestRow(request) {
+      const row = el("div", "message-row");
+      const main = el("div");
+      main.append(el("strong", "", `#${request.orderNumber || "-"} · ${request.status || "-"}`));
+      main.append(el("p", "", `${request.customerFirstName || "Customer"} · ${request.items?.length || 0} item${request.items?.length === 1 ? "" : "s"} · expires ${formatDate(request.expiresAt)}`));
+      if (request.submittedAt) main.append(el("p", "", `Responded ${formatDate(request.submittedAt)}`));
+      if (request.publicUrl) main.append(el("p", "", request.publicUrl));
+      row.append(main);
+      const actions = el("div");
+      actions.style.display = "grid";
+      actions.style.gap = "6px";
+      const badgeClass = request.status === "customer_responded" ? "badge" : request.status === "expired" || request.status === "revoked" ? "badge error" : "badge warn";
+      actions.append(el("span", badgeClass, request.status || "-"));
+      const copy = el("button", "btn-outline", "Copy Link");
+      copy.type = "button";
+      copy.disabled = !request.publicUrl;
+      copy.addEventListener("click", async () => {
+        await navigator.clipboard.writeText(request.publicUrl || "");
+        toast("success", "Secure link copied.");
+      });
+      actions.append(copy);
+      if (!["completed", "revoked", "expired"].includes(request.status)) {
+        const complete = el("button", "btn-soft", "Complete");
+        complete.type = "button";
+        complete.addEventListener("click", () => requestAction(request.requestId, "complete"));
+        actions.append(complete);
+        const revoke = el("button", "btn-danger", "Revoke");
+        revoke.type = "button";
+        revoke.addEventListener("click", () => requestAction(request.requestId, "revoke"));
+        actions.append(revoke);
+      }
+      row.append(actions);
+      return row;
+    }
+
+    async function loadSubstitutionRequests() {
+      if (!state.authenticated || !els.requestsList) return;
+      const params = new URLSearchParams({ page: String(state.requestsPage), limit: String(state.requestsLimit) });
+      if (els.requestsSearch.value.trim()) params.set("search", els.requestsSearch.value.trim());
+      if (els.requestsStatus.value) params.set("status", els.requestsStatus.value);
+      try {
+        const result = await api(`/api/substitution-requests?${params.toString()}`);
+        clear(els.requestsList);
+        if (result.warning) els.requestsList.append(el("div", "notice warn", result.warning));
+        const requests = result.requests || [];
+        if (!requests.length) {
+          els.requestsList.append(el("div", "empty", "No substitution requests matched this view."));
+        } else {
+          requests.forEach((request) => els.requestsList.append(requestRow(request)));
+        }
+        els.requestsPager.textContent = `Page ${result.page || 1} of ${result.totalPages || 1} - ${result.total || 0} request${result.total === 1 ? "" : "s"}`;
+      } catch (error) {
+        clear(els.requestsList);
+        els.requestsList.append(el("div", "notice error", error.message));
+      }
+    }
+
+    async function requestAction(requestId, action) {
+      try {
+        await api(`/api/substitution-requests/${encodeURIComponent(requestId)}/${action}`, { method: "POST", body: JSON.stringify({}) });
+        toast("success", "Request updated.");
+        await loadSubstitutionRequests();
+      } catch (error) {
+        toast("error", error.message);
+      }
+    }
+
+    function responseTokenFromPath() {
+      const match = window.location.pathname.match(/^\/respond\/([^/]+)$/);
+      return match ? decodeURIComponent(match[1]) : "";
+    }
+
+    function customerChoiceLabel(choice) {
+      if (!choice) return "No choice selected";
+      if (choice.type === "refund") return "Refund this item";
+      if (choice.type === "store_choice") return "Let the store choose";
+      if (choice.type === "contact") return "Please contact me";
+      return `${choice.productTitle || "Selected substitute"}${choice.priceDifference ? ` · ${choice.priceDifference > 0 ? "more" : "less"}` : ""}`;
+    }
+
+    function renderSubmittedSummary(request) {
+      clear(els.respondContent);
+      els.respondIntro.textContent = `Thanks${request.customerFirstName ? `, ${request.customerFirstName}` : ""}. We received your choices for ${request.maskedOrderReference}.`;
+      const card = el("article", "card");
+      const pad = el("div", "card-pad");
+      pad.append(el("h2", "", "Submitted Choices"));
+      const summary = el("div", "review-summary");
+      (request.items || []).forEach((item) => {
+        summary.append(el("div", "", `${item.originalTitle}: ${customerChoiceLabel(item.customerChoice)}`));
+      });
+      pad.append(summary);
+      pad.append(el("p", "notice", "Thank you - we've received your choices. Our team will review them before updating your order."));
+      card.append(pad);
+      els.respondContent.append(card);
+    }
+
+    function renderCustomerResponse(request) {
+      clear(els.respondContent);
+      els.respondIntro.textContent = `${request.customerFirstName ? `${request.customerFirstName}, please choose` : "Please choose"} for ${request.maskedOrderReference}.`;
+      if (["expired", "revoked", "completed"].includes(request.status)) {
+        els.respondContent.append(el("div", "notice error", request.status === "expired" ? "This request has expired." : request.status === "revoked" ? "This request is no longer active." : "This request has already been completed by our team."));
+        return;
+      }
+      if (request.submittedAt) {
+        renderSubmittedSummary(request);
+        return;
+      }
+      (request.items || []).forEach((item, index) => {
+        const card = el("article", "card");
+        const pad = el("div", "card-pad customer-response-card");
+        pad.append(el("h2", "", item.originalTitle));
+        pad.append(el("p", "fine", `Ordered quantity: ${item.quantity}. ${item.staffNote || request.staffNote || ""}`));
+        (item.substituteOptions || []).forEach((option) => {
+          const label = el("label", "choice-card");
+          label.append(Object.assign(el("input"), { type: "radio", name: `choice-${item.requestItemId}`, value: `substitute:${option.optionId}` }));
+          label.append(productImage(option.imageUrl, option.productTitle));
+          const text = el("span");
+          text.append(el("strong", "", option.productTitle));
+          text.append(el("span", "product-meta", `${option.variantTitle || "Default"} · ${option.price || ""} · ${priceDiffLabel(item.originalPrice, option.price)}`));
+          label.append(text);
+          pad.append(label);
+        });
+        [
+          ["store_choice", "Let the store choose a similar substitute"],
+          ["refund", "Refund this item"],
+          ["contact", "Please contact me before making a change"]
+        ].forEach(([value, text]) => {
+          const label = el("label", "choice-card no-image");
+          label.append(Object.assign(el("input"), { type: "radio", name: `choice-${item.requestItemId}`, value }));
+          label.append(el("strong", "", text));
+          pad.append(label);
+        });
+        card.append(pad);
+        els.respondContent.append(card);
+      });
+      const review = el("div", "review-summary");
+      review.id = "responseReview";
+      review.textContent = "Choose one option for each item, then confirm.";
+      els.respondContent.append(review);
+      const notice = el("div", "notice", "Your choice will be reviewed by our team. Any price difference will be confirmed before your order is updated.");
+      els.respondContent.append(notice);
+      const confirm = el("button", "btn-primary", "Confirm My Choices");
+      confirm.type = "button";
+      confirm.addEventListener("click", () => submitCustomerResponse(request));
+      els.respondContent.append(confirm);
+      document.querySelectorAll("input[type='radio']").forEach((radio) => radio.addEventListener("change", () => updateResponseReview(request)));
+    }
+
+    function selectedCustomerChoices(request) {
+      return (request.items || []).map((item) => {
+        const selected = document.querySelector(`input[name="choice-${CSS.escape(item.requestItemId)}"]:checked`);
+        if (!selected) return null;
+        const value = selected.value;
+        if (value.startsWith("substitute:")) return { requestItemId: item.requestItemId, type: "substitute", optionId: value.replace("substitute:", "") };
+        return { requestItemId: item.requestItemId, type: value };
+      });
+    }
+
+    function updateResponseReview(request) {
+      const summary = document.getElementById("responseReview");
+      if (!summary) return;
+      const choices = selectedCustomerChoices(request);
+      if (choices.some((choice) => !choice)) {
+        summary.textContent = "Choose one option for each item, then confirm.";
+        return;
+      }
+      clear(summary);
+      choices.forEach((choice) => {
+        const item = request.items.find((entry) => entry.requestItemId === choice.requestItemId);
+        const option = item?.substituteOptions?.find((entry) => entry.optionId === choice.optionId);
+        summary.append(el("div", "", `${item?.originalTitle || "Item"}: ${choice.type === "substitute" ? option?.productTitle : choice.type.replace("_", " ")}`));
+      });
+    }
+
+    async function loadCustomerResponse() {
+      const token = responseTokenFromPath();
+      document.querySelector(".layout").style.display = "block";
+      document.querySelector(".sidebar").classList.add("hidden");
+      document.querySelector(".topbar").classList.add("hidden");
+      if (!token) {
+        els.respondIntro.textContent = "This link is invalid.";
+        return;
+      }
+      try {
+        const result = await api(`/api/public/substitution-request?token=${encodeURIComponent(token)}`);
+        state.customerRequest = result.request;
+        renderCustomerResponse(result.request);
+      } catch (error) {
+        clear(els.respondContent);
+        els.respondIntro.textContent = "This request is not available.";
+        els.respondContent.append(el("div", "notice error", error.message || "Please contact Welkom USA for help."));
+      }
+    }
+
+    async function submitCustomerResponse(request) {
+      const choices = selectedCustomerChoices(request);
+      if (choices.some((choice) => !choice)) return toast("error", "Please choose one option for each item.");
+      try {
+        const result = await api("/api/public/substitution-response", {
+          method: "POST",
+          body: JSON.stringify({ token: responseTokenFromPath(), choices })
+        });
+        renderSubmittedSummary(result.request);
+      } catch (error) {
+        toast("error", error.message);
+      }
     }
 
     async function loadSentMessages() {
@@ -2600,6 +3152,11 @@
       if (event.key === "Enter") searchSubstitutions();
     });
     els.customSubButton.addEventListener("click", addCustomSubstitute);
+    els.addRequestOptionButton.addEventListener("click", addApprovedRequestOption);
+    els.clearRequestButton.addEventListener("click", clearRequestBuilder);
+    els.sendRequestButton.addEventListener("click", sendCustomerRequest);
+    els.requestStaffNote.addEventListener("input", renderRequestBuilder);
+    els.requestExpiry.addEventListener("change", renderRequestBuilder);
     els.manualMode.addEventListener("change", toggleManualMode);
     [els.manualPhone, els.manualFirstName, els.manualUnavailable, els.manualSubstitute, els.manualReference, els.manualConsent].forEach((node) => {
       node.addEventListener("input", () => {
@@ -2658,6 +3215,7 @@
     els.dashboardNav.addEventListener("click", () => navigate("dashboard"));
     els.historyShortcut.addEventListener("click", scrollToHistory);
     els.historyNav.addEventListener("click", () => navigate("sent"));
+    els.requestsNav.addEventListener("click", () => navigate("requests"));
     els.templatesNav.addEventListener("click", () => navigate("templates"));
     els.settingsNav.addEventListener("click", () => navigate("settings"));
     els.backupNav.addEventListener("click", () => navigate("backup"));
@@ -2682,6 +3240,22 @@
     els.historyDryRun.addEventListener("change", () => {
       state.historyPage = 1;
       loadSentMessages();
+    });
+    els.requestsRefreshButton.addEventListener("click", loadSubstitutionRequests);
+    els.requestsResetButton.addEventListener("click", () => {
+      els.requestsSearch.value = "";
+      els.requestsStatus.value = "";
+      state.requestsPage = 1;
+      loadSubstitutionRequests();
+    });
+    els.requestsSearch.addEventListener("input", () => {
+      state.requestsPage = 1;
+      window.clearTimeout(state.requestsTimer);
+      state.requestsTimer = window.setTimeout(loadSubstitutionRequests, 250);
+    });
+    els.requestsStatus.addEventListener("change", () => {
+      state.requestsPage = 1;
+      loadSubstitutionRequests();
     });
     els.templateBody.addEventListener("input", updateTemplatePreview);
     els.templateName.addEventListener("input", () => {

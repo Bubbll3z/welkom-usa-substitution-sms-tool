@@ -212,3 +212,120 @@ test("redaction validation and backup prevent secret leakage", async () => {
   assert.doesNotMatch(body, /\+15551234567/);
   assert.doesNotMatch(body, /shpat_test|TWILIO_AUTH_TOKEN|authorization:|Bearer /i);
 });
+
+function baseSubstitutionRequest(overrides = {}) {
+  return {
+    shopifyOrderId: "gid://shopify/Order/1",
+    orderNumber: "#1023",
+    customerFirstName: "Sarah",
+    customerPhoneHash: "phone-hash",
+    customerPhoneRedacted: "+15*******67",
+    createdBy: "Test Staff",
+    items: [
+      {
+        originalLineItemId: "gid://shopify/LineItem/1",
+        originalVariantId: "gid://shopify/ProductVariant/old",
+        originalTitle: "Cadbury Crunchie 40g",
+        originalImageUrl: "https://example.com/crunchie.jpg",
+        originalPrice: "USD 3.99",
+        quantity: 1,
+        substituteOptions: [
+          {
+            variantId: "gid://shopify/ProductVariant/new",
+            productTitle: "Cadbury Flake 32g",
+            variantTitle: "Default",
+            sku: "FLAKE32",
+            imageUrl: "https://example.com/flake.jpg",
+            price: "USD 3.99",
+            availableQuantityAtCreation: 8
+          }
+        ]
+      }
+    ],
+    ...overrides
+  };
+}
+
+test("substitution requests use secure token hashes and public redaction", async () => {
+  makeMockStores();
+  const created = await dataStore.createSubstitutionRequest(baseSubstitutionRequest({
+    token: "abcdefghijklmnopqrstuvwxyz1234567890ABCDEFG"
+  }));
+  assert.equal(created.ok, true);
+  assert.ok(created.token.length >= 32);
+  assert.equal(created.record.tokenHash, dataStore.hashResponseToken(created.token));
+  assert.notEqual(created.record.tokenHash, created.token);
+
+  const publicView = dataStore.safeRequestForCustomer(created.record);
+  const body = JSON.stringify(publicView);
+  assert.match(body, /Cadbury Crunchie/);
+  assert.doesNotMatch(body, /gid:\/\/shopify|phone-hash|15551234567|tokenHash|customerPhone/i);
+
+  const fetched = await dataStore.getSubstitutionRequestByToken(created.token);
+  assert.equal(fetched.requestId, created.record.requestId);
+});
+
+test("customer response supports substitutes, refund, store choice and contact without overwriting", async () => {
+  makeMockStores();
+  const created = await dataStore.createSubstitutionRequest(baseSubstitutionRequest({
+    token: "abcdefghijklmnopqrstuvwxyz1234567890ABCDEFG",
+    items: [
+      ...baseSubstitutionRequest().items,
+      {
+        originalLineItemId: "gid://shopify/LineItem/2",
+        originalTitle: "Marmite 250g",
+        originalPrice: "USD 8.99",
+        quantity: 1,
+        substituteOptions: [
+          {
+            variantId: "gid://shopify/ProductVariant/marmite",
+            productTitle: "Marmite 125g",
+            variantTitle: "Default",
+            sku: "MAR125",
+            price: "USD 6.99",
+            availableQuantityAtCreation: 4
+          }
+        ]
+      }
+    ]
+  }));
+  const [first, second] = created.record.items;
+  const invalid = await dataStore.submitSubstitutionResponse(created.token, [
+    { requestItemId: first.requestItemId, type: "substitute", optionId: "unapproved" },
+    { requestItemId: second.requestItemId, type: "refund" }
+  ]);
+  assert.equal(invalid.ok, false);
+  assert.equal(invalid.code, "INVALID_RESPONSE");
+
+  const submitted = await dataStore.submitSubstitutionResponse(created.token, [
+    { requestItemId: first.requestItemId, type: "substitute", optionId: first.substituteOptions[0].optionId },
+    { requestItemId: second.requestItemId, type: "refund" }
+  ]);
+  assert.equal(submitted.ok, true);
+  assert.equal(submitted.record.status, "customer_responded");
+
+  const repeat = await dataStore.submitSubstitutionResponse(created.token, [
+    { requestItemId: first.requestItemId, type: "store_choice" },
+    { requestItemId: second.requestItemId, type: "contact" }
+  ]);
+  assert.equal(repeat.ok, false);
+  assert.equal(repeat.code, "ALREADY_SUBMITTED");
+});
+
+test("expired, revoked and completed substitution requests are protected", async () => {
+  makeMockStores();
+  const expired = await dataStore.createSubstitutionRequest(baseSubstitutionRequest({
+    token: "expiredabcdefghijklmnopqrstuvwxyz1234567890",
+    expiresAt: "2020-01-01T00:00:00.000Z"
+  }));
+  const expiredSubmit = await dataStore.submitSubstitutionResponse(expired.token, []);
+  assert.equal(expiredSubmit.code, "REQUEST_EXPIRED");
+
+  const active = await dataStore.createSubstitutionRequest(baseSubstitutionRequest({
+    token: "activeabcdefghijklmnopqrstuvwxyz1234567890"
+  }));
+  const revoked = await dataStore.updateSubstitutionRequestStatus(active.record.requestId, "revoked", "Manager");
+  assert.equal(revoked.ok, true);
+  const revokedSubmit = await dataStore.submitSubstitutionResponse(active.token, []);
+  assert.equal(revokedSubmit.code, "REQUEST_REVOKED");
+});

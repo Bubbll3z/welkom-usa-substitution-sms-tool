@@ -1,4 +1,6 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const test = require("node:test");
 const twilio = require("twilio");
 
@@ -495,6 +497,80 @@ test("history endpoint lists stored message records without secrets", async () =
   } finally {
     global.fetch = originalFetch;
   }
+});
+
+test("secure substitution request API creates link, redacts public data, and accepts one customer response", async () => {
+  const blocked = await handler(event("/api/substitution-requests", {
+    orderId: "gid://shopify/Order/1",
+    items: []
+  }));
+  assert.equal(blocked.statusCode, 401);
+
+  const cookie = await loginCookie();
+  const originalFetch = global.fetch;
+  global.fetch = mockFetch();
+  try {
+    const created = await handler(event("/api/substitution-requests", {
+      orderId: "gid://shopify/Order/1",
+      expiryHours: 48,
+      staffNote: "Please choose the option you prefer.",
+      items: [{
+        lineItemId: "gid://shopify/LineItem/1",
+        quantity: 1,
+        substituteVariantIds: ["gid://shopify/ProductVariant/new"]
+      }],
+      idempotencyKey: "secure-request-api"
+    }, { cookie }));
+    assert.equal(created.statusCode, 200);
+    const createdBody = JSON.parse(created.body);
+    assert.equal(createdBody.success, true);
+    assert.match(createdBody.publicUrl, /\/respond\//);
+    assert.doesNotMatch(created.body, /15551234567|shpat_test|tokenHash|gid:\/\/shopify\/Order/);
+
+    const token = createdBody.publicUrl.split("/respond/")[1];
+    const publicRead = await handler(event(`/api/public/substitution-request?token=${encodeURIComponent(token)}`, undefined, {}, "GET"));
+    assert.equal(publicRead.statusCode, 200);
+    const publicBody = JSON.parse(publicRead.body);
+    assert.equal(publicBody.success, true);
+    assert.equal(publicBody.request.items.length, 1);
+    assert.doesNotMatch(publicRead.body, /15551234567|shpat_test|tokenHash|gid:\/\/shopify/);
+
+    const item = publicBody.request.items[0];
+    const invalid = await handler(event("/api/public/substitution-response", {
+      token,
+      choices: [{ requestItemId: item.requestItemId, type: "substitute", optionId: "unapproved" }]
+    }));
+    assert.equal(invalid.statusCode, 400);
+    assert.equal(JSON.parse(invalid.body).code, "INVALID_RESPONSE");
+
+    const submitted = await handler(event("/api/public/substitution-response", {
+      token,
+      choices: [{ requestItemId: item.requestItemId, type: "substitute", optionId: item.substituteOptions[0].optionId }]
+    }));
+    assert.equal(submitted.statusCode, 200);
+    assert.equal(JSON.parse(submitted.body).request.status, "customer_responded");
+
+    const repeat = await handler(event("/api/public/substitution-response", {
+      token,
+      choices: [{ requestItemId: item.requestItemId, type: "refund" }]
+    }));
+    assert.equal(repeat.statusCode, 409);
+    assert.equal(JSON.parse(repeat.body).code, "ALREADY_SUBMITTED");
+
+    const list = await handler(event("/api/substitution-requests", undefined, { cookie }, "GET"));
+    assert.equal(list.statusCode, 200);
+    assert.equal(JSON.parse(list.body).requests.length, 1);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("public customer response page markup is present", () => {
+  const html = fs.readFileSync(path.join(__dirname, "../public/index.html"), "utf8");
+  assert.match(html, /id="respondPage"/);
+  assert.match(html, /Choose what you would prefer/);
+  assert.match(html, /Confirm My Choices/);
+  assert.match(html, /choice-card/);
 });
 
 test("config diagnostics reports safe check names without secret values", async () => {
