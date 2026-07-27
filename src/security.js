@@ -7,8 +7,8 @@ const SECURITY_HEADERS = {
   "X-Frame-Options": "DENY",
   "Content-Security-Policy": [
     "default-src 'self'",
-    "script-src 'self' 'sha256-mA4g8WnMAce4+1kV4oY8VkafnF5Z8VCgGcCk2w9/0jI='",
-    "style-src 'self' 'sha256-2DwDAW+QV1PzjmIHF5fhH1OCF+DP3qzotNO7zeljaHo='",
+    "script-src 'self'",
+    "style-src 'self'",
     "img-src 'self' data: https://cdn.shopify.com https://cdn.shopifycdn.net https://*.myshopify.com",
     "connect-src 'self'",
     "frame-ancestors 'none'",

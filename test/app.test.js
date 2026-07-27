@@ -386,15 +386,17 @@ test("security headers, CSP and frame protection are present", async () => {
   assert.match(response.headers["Permissions-Policy"], /payment=\(\)/);
   assert.equal(response.headers["X-Frame-Options"], "DENY");
   assert.match(response.headers["Content-Security-Policy"], /default-src 'self'/);
+  assert.match(response.headers["Content-Security-Policy"], /script-src 'self'(;|$)/);
+  assert.match(response.headers["Content-Security-Policy"], /style-src 'self'(;|$)/);
   assert.match(response.headers["Content-Security-Policy"], /frame-ancestors 'none'/);
   assert.match(response.headers["Content-Security-Policy"], /object-src 'none'/);
-  assert.doesNotMatch(response.headers["Content-Security-Policy"], /unsafe-eval|script-src \*/);
+  assert.doesNotMatch(response.headers["Content-Security-Policy"], /unsafe-inline|unsafe-eval|script-src \*|style-src \*|connect-src \*|sha256-/);
 
   const config = fs.readFileSync(path.join(__dirname, "../netlify.toml"), "utf8");
   assert.match(config, /Content-Security-Policy/);
   assert.match(config, /frame-ancestors 'none'/);
   assert.match(config, /Referrer-Policy = "no-referrer"/);
-  assert.doesNotMatch(config, /unsafe-eval|script-src \*/);
+  assert.doesNotMatch(config, /unsafe-inline|unsafe-eval|script-src \*|style-src \*|connect-src \*|sha256-/);
 });
 
 test("CSRF and Origin protection reject unsafe staff requests and allow valid tokens", async () => {
@@ -984,15 +986,21 @@ test("customer submission attempts are throttled by IP and token", async () => {
 
 test("public customer response page markup is present", () => {
   const html = fs.readFileSync(path.join(__dirname, "../public/index.html"), "utf8");
+  const app = fs.readFileSync(path.join(__dirname, "../public/app.js"), "utf8");
   assert.match(html, /id="respondPage"/);
   assert.match(html, /Choose what you would prefer/);
-  assert.match(html, /Confirm My Choices/);
-  assert.match(html, /choice-card/);
+  assert.match(app, /Confirm My Choices/);
+  assert.match(app, /choice-card/);
 });
 
 test("frontend build does not expose Shopify Admin secrets or direct Admin API calls", () => {
   const html = fs.readFileSync(path.join(__dirname, "../public/index.html"), "utf8");
-  assert.doesNotMatch(html, /shpat_|SHOPIFY_ADMIN_ACCESS_TOKEN|SHOPIFY_CLIENT_SECRET|X-Shopify-Access-Token|\/admin\/api\/|graphql\.json|VITE_.*SHOPIFY/i);
+  const app = fs.readFileSync(path.join(__dirname, "../public/app.js"), "utf8");
+  const css = fs.readFileSync(path.join(__dirname, "../public/styles.css"), "utf8");
+  assert.match(html, /<link rel="stylesheet" href="\/styles\.css">/);
+  assert.match(html, /<script src="\/app\.js" defer><\/script>/);
+  assert.doesNotMatch(html, /<style[\s>]|<script(?!\s+src=)|\sstyle=/i);
+  assert.doesNotMatch(`${html}\n${app}\n${css}`, /shpat_|SHOPIFY_ADMIN_ACCESS_TOKEN|SHOPIFY_CLIENT_SECRET|X-Shopify-Access-Token|\/admin\/api\/|graphql\.json|VITE_.*SHOPIFY/i);
 });
 
 test("config diagnostics reports safe check names without secret values", async () => {
