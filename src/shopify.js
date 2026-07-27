@@ -96,6 +96,14 @@ function money(value) {
   return currency ? `${currency} ${numeric.toFixed(2)}` : `$${numeric.toFixed(2)}`;
 }
 
+function maskEmail(email) {
+  const clean = String(email || "").trim();
+  const [name, domain] = clean.split("@");
+  if (!name || !domain) return "";
+  const visible = name.slice(0, 2);
+  return `${visible}${"*".repeat(Math.max(name.length - visible.length, 3))}@${domain}`;
+}
+
 function consentFromAttributes(customAttributes = [], smsMarketingConsent = null) {
   const found = customAttributes.find((attr) => String(attr.key || "").toLowerCase() === "sms consent");
   const value = found?.value || "";
@@ -142,10 +150,11 @@ function usableSubstitute(variant, excludedVariantId) {
   return true;
 }
 
-function simplifyOrder(order, substitutionProducts = []) {
+function simplifyOrder(order, substitutionProducts = [], options = {}) {
   const phone = pickPhone(order);
   const smsConsent = consentFromAttributes(order.customAttributes || [], order.customer?.smsMarketingConsent);
-  return {
+  const browserSafe = Boolean(options.browserSafe);
+  const simplified = {
     id: order.id,
     name: order.name,
     processedAt: order.processedAt || "",
@@ -158,18 +167,19 @@ function simplifyOrder(order, substitutionProducts = []) {
     customer: {
       firstName: order.customer?.firstName || "",
       lastName: order.customer?.lastName || "",
-      email: order.customer?.email || "",
-      phone,
+      email: browserSafe ? "" : order.customer?.email || "",
+      maskedEmail: maskEmail(order.customer?.email || ""),
+      phone: browserSafe ? "" : phone,
       redactedPhone: redactPhone(phone)
     },
     shippingAddress: {
-      name: order.shippingAddress?.name || "",
-      address1: order.shippingAddress?.address1 || "",
-      address2: order.shippingAddress?.address2 || "",
-      city: order.shippingAddress?.city || "",
-      province: order.shippingAddress?.province || "",
-      country: order.shippingAddress?.country || "",
-      zip: order.shippingAddress?.zip || ""
+      name: browserSafe ? "" : order.shippingAddress?.name || "",
+      address1: browserSafe ? "" : order.shippingAddress?.address1 || "",
+      address2: browserSafe ? "" : order.shippingAddress?.address2 || "",
+      city: browserSafe ? "" : order.shippingAddress?.city || "",
+      province: browserSafe ? "" : order.shippingAddress?.province || "",
+      country: browserSafe ? "" : order.shippingAddress?.country || "",
+      zip: browserSafe ? "" : order.shippingAddress?.zip || ""
     },
     lineItems: (order.lineItems?.nodes || []).map((item) => {
       const variant = item.variant || {};
@@ -192,6 +202,10 @@ function simplifyOrder(order, substitutionProducts = []) {
     }),
     substitutionProducts
   };
+  if (browserSafe) {
+    simplified.shippingAddressDisplay = order.shippingAddress ? "Hidden for customer privacy" : "";
+  }
+  return simplified;
 }
 
 async function shopifyGraphql(query, variables, { env = process.env, fetchImpl = fetch } = {}) {
@@ -373,7 +387,7 @@ async function findOrder(queryText, { env = process.env, fetchImpl = fetch } = {
     status: 200,
     body: {
       success: true,
-      order: simplifyOrder(order)
+      order: simplifyOrder(order, [], { browserSafe: true })
     }
   };
 }
@@ -448,6 +462,7 @@ module.exports = {
   getOrderById,
   getVariantById,
   hasConfig,
+  maskEmail,
   normalizeOrderQuery,
   searchProductsForSubstitutions,
   searchSubstitutionsForLineItem

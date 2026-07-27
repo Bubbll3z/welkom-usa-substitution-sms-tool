@@ -18,10 +18,11 @@ Do not use this app for marketing messages.
 ## Log In
 
 1. Open the Welkom USA SMS app link.
-2. Enter the staff password.
-3. Click **Log in**.
+2. Enter your staff username.
+3. Enter your staff password.
+4. Click **Log in**.
 
-If login fails, ask a manager to check the staff password in Netlify.
+If login fails, ask a manager to check that your staff user is active or reset your password.
 
 ## Send a Shopify Order Substitution SMS
 

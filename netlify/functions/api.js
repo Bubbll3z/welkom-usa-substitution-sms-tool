@@ -5,14 +5,25 @@ const { connectLambda } = require("@netlify/blobs");
 
 const {
   authRequired,
-  checkStaffPassword,
-  clearSessionCookie,
-  cookieForSession,
-  createSession,
-  getSessionFromEvent,
-  rateLimitLogin,
-  resetLoginAttempts
+  cleanupExpiredSessions,
+  requireAuth,
+  requireRole
 } = require("../../src/auth");
+const { ACCESS_TYPES, API_ENDPOINTS, matchEndpoint } = require("../../src/endpoint-registry");
+const {
+  cleanString,
+  validateE164,
+  validateEnum,
+  validateGid,
+  validateId,
+  validateObject,
+  validateString
+} = require("../../src/validation");
+const {
+  handleAuthLogin,
+  handleAuthLogout,
+  handleAuthMe
+} = require("../../src/auth-handlers");
 const {
   findOrder,
   getOrderById,
@@ -22,14 +33,19 @@ const {
   searchSubstitutionsForLineItem
 } = require("../../src/shopify");
 const { buildSubstitutionMessage, isE164, redactPhone, sendSms, smsLength, validateMessage, validateTwilioSignature } = require("../../src/sms");
+const { checkRateLimit } = require("../../src/rate-limit");
+const { securityHeaders, validateCsrf } = require("../../src/security");
 const {
   archiveTemplate,
   backupPayload,
+  cleanupDataStoreRecords,
+  createAuditRecord,
   createMessageRecord,
   createSubstitutionRequest,
   defaultTemplate,
   findByIdempotency,
   findDuplicate,
+  getOptOutStatus,
   getMessageRecord,
   getSubstitutionRequest,
   getSubstitutionRequestByToken,
@@ -41,7 +57,10 @@ const {
   messageStats,
   publicRecord,
   queryMessageRecords,
+  recordProcessedTwilioMessage,
   recordsToCsv,
+  rotateSubstitutionRequestToken,
+  saveOptOutStatus,
   saveRecord,
   safeRequestForCustomer,
   safeRequestForStaff,
@@ -49,11 +68,17 @@ const {
   submitSubstitutionResponse,
   updateSubstitutionRequestSms,
   updateSubstitutionRequestStatus,
-  updateMessageStatus
+  updateMessageStatusBySid
 } = require("../../src/history");
+const { cleanupRateLimitRecords } = require("../../src/rate-limit");
+const { logger } = require("../../src/safe-logger");
 
-const apiBuckets = new Map();
 const MAX_BODY_BYTES = 16 * 1024;
+const ALLOWED_TWILIO_STATUSES = new Set(["accepted", "queued", "sending", "sent", "delivered", "undelivered", "failed", "receiving", "received", "read"]);
+const STOP_KEYWORDS = new Set(["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"]);
+const HELP_KEYWORDS = new Set(["HELP", "INFO"]);
+const ALLOWED_SHOPIFY_WEBHOOK_TOPICS = new Set(["orders/updated", "orders/cancelled"]);
+let activeEvent = null;
 
 function connectNetlifyBlobs(event) {
   if (!event?.blobs) return { connected: false, reason: "no-lambda-blob-payload" };
@@ -69,6 +94,7 @@ function json(statusCode, body, headers = {}) {
   return {
     statusCode,
     headers: {
+      ...securityHeaders(activeEvent || { headers: {} }),
       "Content-Type": "application/json",
       "Cache-Control": "no-store",
       ...headers
@@ -77,8 +103,27 @@ function json(statusCode, body, headers = {}) {
   };
 }
 
-function error(statusCode, code, message) {
-  return json(statusCode, { success: false, code, error: message });
+function error(statusCode, code, message, headers = {}) {
+  return json(statusCode, { success: false, code, error: message }, headers);
+}
+
+function publicError(statusCode, code = "REQUEST_FAILED") {
+  return json(statusCode, { success: false, code, error: "Unable to process request" });
+}
+
+function methodNotAllowed(methods) {
+  return json(405, { success: false, code: "INVALID_REQUEST", error: "Method not allowed." }, { Allow: methods.join(", ") });
+}
+
+function optionsResponse() {
+  return {
+    statusCode: 204,
+    headers: {
+      ...securityHeaders(activeEvent || { headers: {} }),
+      "Access-Control-Max-Age": "600"
+    },
+    body: ""
+  };
 }
 
 function storageErrorResponse(statusCode, code, message, diagnostic = {}) {
@@ -100,10 +145,9 @@ function safeConfigDiagnostics(event) {
   const checks = [];
   const add = (name, ok, guidance) => checks.push({ name, ok: Boolean(ok), guidance: ok ? "" : guidance });
   const storageProvider = process.env.MESSAGE_STORAGE_PROVIDER || (process.env.NETLIFY === "true" ? "netlify-blobs" : "memory");
-  const loginRequired = authRequired();
-  add("REQUIRE_LOGIN", !loginRequired || Boolean(process.env.STAFF_PASSWORD), "Set STAFF_PASSWORD, or set REQUIRE_LOGIN=false for temporary staff testing.");
-  add("STAFF_PASSWORD", !loginRequired || Boolean(process.env.STAFF_PASSWORD), "Add STAFF_PASSWORD in Netlify environment variables.");
-  add("SESSION_SECRET", !loginRequired || String(process.env.SESSION_SECRET || "").length >= 32, "Add SESSION_SECRET with at least 32 random characters.");
+  add("Staff authentication", authRequired(), "Staff authentication must remain enabled.");
+  add("Staff user store", true, "Create at least one admin user in the welkom-sms-users Blob store.");
+  add("Session store", true, "Staff sessions are stored in the welkom-sms-sessions Blob store.");
   add("SHOPIFY_SHOP_DOMAIN", Boolean(process.env.SHOPIFY_SHOP_DOMAIN), "Add SHOPIFY_SHOP_DOMAIN, for example welkom-usa.myshopify.com.");
   add("Shopify credentials", hasConfig(), "Add SHOPIFY_ADMIN_ACCESS_TOKEN or SHOPIFY_CLIENT_ID plus SHOPIFY_CLIENT_SECRET.");
   add("TWILIO_ACCOUNT_SID", /^AC[a-fA-F0-9]{32}$/.test(String(process.env.TWILIO_ACCOUNT_SID || "")), "Add a valid TWILIO_ACCOUNT_SID starting with AC.");
@@ -131,27 +175,44 @@ function bodyTooLarge(event) {
   return Buffer.byteLength(event.body || "", "utf8") > MAX_BODY_BYTES;
 }
 
-function clientKey(event, route) {
-  return `${route}:${event.headers?.["x-forwarded-for"] || event.headers?.["client-ip"] || "local"}`;
+function clientIp(event) {
+  return String(event.headers?.["x-forwarded-for"] || event.headers?.["X-Forwarded-For"] || event.headers?.["client-ip"] || "local")
+    .split(",")[0]
+    .trim()
+    .slice(0, 80) || "local";
 }
 
-function rateLimit(event, route, max = 60, windowMs = 60 * 1000) {
-  if (process.env.NODE_ENV === "test") return null;
-  const key = clientKey(event, route);
-  const now = Date.now();
-  const entry = apiBuckets.get(key) || { count: 0, resetAt: now + windowMs };
-  if (entry.resetAt < now) {
-    entry.count = 0;
-    entry.resetAt = now + windowMs;
-  }
-  entry.count += 1;
-  apiBuckets.set(key, entry);
-  if (entry.count > max) return error(429, "RATE_LIMITED", "Too many requests. Please wait and try again.");
-  return null;
+function rateLimitResponse(result) {
+  return error(429, "RATE_LIMITED", "Too many requests. Please wait and try again.", { "Retry-After": String(result.retryAfter || 60) });
+}
+
+async function rateLimit(key, limit, windowSeconds, blockSeconds = windowSeconds) {
+  const result = await checkRateLimit({ key, limit, windowSeconds, blockSeconds });
+  if (result.ok) return null;
+  await createAuditRecord({
+    type: "rate_limit_event",
+    details: {
+      keyHash: crypto.createHash("sha256").update(String(key || "")).digest("hex"),
+      limit,
+      windowSeconds,
+      retryAfter: result.retryAfter
+    }
+  }).catch(() => {});
+  return rateLimitResponse(result);
 }
 
 function parseForm(event) {
   return Object.fromEntries(new URLSearchParams(event.body || ""));
+}
+
+function timingSafeEqualText(left, right) {
+  const leftBuffer = Buffer.from(String(left || ""));
+  const rightBuffer = Buffer.from(String(right || ""));
+  if (!leftBuffer.length || leftBuffer.length !== rightBuffer.length) {
+    crypto.timingSafeEqual(Buffer.alloc(1), Buffer.alloc(1));
+    return false;
+  }
+  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 function routeName(event) {
@@ -164,57 +225,41 @@ function requireJson(event) {
   return contentType.includes("application/json");
 }
 
-function requireSession(event) {
-  const session = getSessionFromEvent(event);
+async function authorizeRegisteredEndpoint(event, route) {
+  const endpoint = matchEndpoint(route, API_ENDPOINTS);
+  if (!endpoint) return publicError(404, "NOT_FOUND");
+  if (!endpoint.methods.includes(event.httpMethod)) return methodNotAllowed(endpoint.methods);
+  if (endpoint.access === ACCESS_TYPES.staff) {
+    const auth = await requireAuth(event);
+    if (!auth.ok) return publicError(auth.status || 401, auth.code || "AUTH_REQUIRED");
+    const csrf = validateCsrf({ event, auth });
+    if (!csrf.ok) return publicError(csrf.status || 403, csrf.code || "CSRF_INVALID");
+  }
+  if (endpoint.access === ACCESS_TYPES.admin) {
+    const auth = await requireRole(event, "admin");
+    if (!auth.ok) return publicError(auth.status || 403, auth.code || "FORBIDDEN");
+    const csrf = validateCsrf({ event, auth });
+    if (!csrf.ok) return publicError(csrf.status || 403, csrf.code || "CSRF_INVALID");
+  }
+  return null;
+}
+
+async function requireSession(event) {
+  const session = await requireAuth(event);
   if (!session.ok) return { error: error(session.status, session.code, session.error) };
   return { session };
 }
 
 async function handleLogin(event) {
-  if (!authRequired()) {
-    return json(200, {
-      success: true,
-      staffName: process.env.STAFF_NAME || "Welkom USA Staff",
-      expiresAt: new Date(Date.now() + Number(process.env.SESSION_DURATION_MINUTES || 480) * 60 * 1000).toISOString(),
-      authRequired: false
-    });
-  }
-  if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
-  const limited = rateLimitLogin(event);
-  if (!limited.ok) return error(limited.status, limited.code, limited.error);
-
-  const body = parseBody(event);
-  if (!body) return error(400, "INVALID_REQUEST", "Request body must be valid JSON.");
-
-  const password = checkStaffPassword(body.password);
-  if (!password.ok) return error(password.status, password.code, password.error);
-
-  const session = createSession({ staffName: body.staffName || process.env.STAFF_NAME || "Welkom USA Staff" });
-  if (!session.ok) return error(session.status, session.code, session.error);
-
-  resetLoginAttempts(event);
-  return json(200, {
-    success: true,
-    staffName: session.payload.staffName,
-    expiresAt: new Date(session.payload.exp).toISOString()
-  }, {
-    "Set-Cookie": cookieForSession(session.token, event)
-  });
+  return handleAuthLogin(event);
 }
 
-async function handleLogout() {
-  return json(200, { success: true }, { "Set-Cookie": clearSessionCookie() });
+async function handleLogout(event) {
+  return handleAuthLogout(event);
 }
 
 async function handleSession(event) {
-  const auth = requireSession(event);
-  if (auth.error) return auth.error;
-  return json(200, {
-    success: true,
-    staffName: auth.session.staffName,
-    expiresAt: new Date(auth.session.payload.exp).toISOString(),
-    authRequired: authRequired()
-  });
+  return handleAuthMe(event);
 }
 
 function publicBaseUrl(event) {
@@ -223,6 +268,33 @@ function publicBaseUrl(event) {
   const host = event.headers.host || event.headers.Host || "";
   const proto = event.headers["x-forwarded-proto"] || event.headers["X-Forwarded-Proto"] || "https";
   return host ? `${proto}://${host}` : "";
+}
+
+function externallyVisibleWebhookUrl(event, route) {
+  const statusBase = String(process.env.TWILIO_STATUS_CALLBACK_BASE_URL || "").replace(/\/$/, "");
+  const inboundBase = String(process.env.TWILIO_INBOUND_WEBHOOK_BASE_URL || process.env.PUBLIC_APP_URL || process.env.URL || "").replace(/\/$/, "");
+  const host = event.headers.host || event.headers.Host || "";
+  const proto = event.headers["x-forwarded-proto"] || event.headers["X-Forwarded-Proto"] || "https";
+  const origin = route === "twilio-status" ? statusBase || inboundBase || `${proto}://${host}` : inboundBase || statusBase || `${proto}://${host}`;
+  return `${origin}/api/${route}${event.rawQuery ? `?${event.rawQuery}` : ""}`;
+}
+
+function twiml(message = "") {
+  const safe = String(message || "").replace(/[<>&'"]/g, (char) => ({
+    "<": "&lt;",
+    ">": "&gt;",
+    "&": "&amp;",
+    "'": "&apos;",
+    "\"": "&quot;"
+  })[char]);
+  return {
+    statusCode: 200,
+    headers: {
+      "Content-Type": "text/xml; charset=utf-8",
+      "Cache-Control": "no-store"
+    },
+    body: message ? `<Response><Message>${safe}</Message></Response>` : "<Response></Response>"
+  };
 }
 
 function hashPhone(phone) {
@@ -237,31 +309,47 @@ function responseSmsMessage(orderNumber, secureLink) {
   return `Welkom USA: An item in order #${String(orderNumber || "").replace(/^#/, "")} is unavailable. Choose a substitute or refund here: ${secureLink}. Reply HELP for help or STOP to opt out.`;
 }
 
+function invalidRequest() {
+  return error(400, "INVALID_REQUEST", "Unable to process request");
+}
+
+function validateBody(body, options) {
+  const validation = validateObject(body, options);
+  return validation.ok ? null : invalidRequest();
+}
+
 async function handleOrderSearch(event) {
-  const limited = rateLimit(event, "order-search", 30);
-  if (limited) return limited;
   if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
-  const auth = requireSession(event);
+  const auth = await requireSession(event);
   if (auth.error) return auth.error;
+  const limited = await rateLimit(`order-search:session:${auth.session.session.sessionIdHash}`, 30, 60);
+  if (limited) return limited;
 
   const body = parseBody(event);
   if (!body) return error(400, "INVALID_REQUEST", "Request body must be valid JSON.");
+  const invalid = validateBody(body, { allowed: ["query"], required: ["query"] });
+  if (invalid) return invalid;
+  const query = validateString(body.query, { min: 1, max: 80, pattern: /^#?[A-Za-z0-9-]+$/ });
+  if (!query.ok) return invalidRequest();
 
-  const result = await findOrder(body.query);
+  const result = await findOrder(query.value);
   return json(result.status, result.body);
 }
 
 async function handleProductSearch(event) {
-  const limited = rateLimit(event, "product-search", 40);
-  if (limited) return limited;
   if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
-  const auth = requireSession(event);
+  const auth = await requireSession(event);
   if (auth.error) return auth.error;
+  const limited = await rateLimit(`product-search:session:${auth.session.session.sessionIdHash}`, 60, 60);
+  if (limited) return limited;
 
   const body = parseBody(event);
   if (!body) return error(400, "INVALID_REQUEST", "Request body must be valid JSON.");
+  const invalid = validateBody(body, { allowed: ["query", "excludeVariantId"], required: ["query"] });
+  if (invalid) return invalid;
+  if (body.excludeVariantId && !validateGid(body.excludeVariantId, "ProductVariant").ok) return invalidRequest();
 
-  const query = String(body.query || "").trim();
+  const query = cleanString(body.query, 120);
   if (!query) return error(400, "INVALID_REQUEST", "Product search is required.");
   if (query.length > 120) return error(400, "INVALID_REQUEST", "Product search is too long.");
   if (!hasConfig()) return error(500, "SHOPIFY_ERROR", "Shopify Admin API is not configured.");
@@ -273,14 +361,17 @@ async function handleProductSearch(event) {
 }
 
 async function handleLineItemSubstitutions(event) {
-  const limited = rateLimit(event, "line-item-substitutions", 40);
-  if (limited) return limited;
   if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
-  const auth = requireSession(event);
+  const auth = await requireSession(event);
   if (auth.error) return auth.error;
+  const limited = await rateLimit(`product-search:session:${auth.session.session.sessionIdHash}`, 60, 60);
+  if (limited) return limited;
 
   const body = parseBody(event);
   if (!body) return error(400, "INVALID_REQUEST", "Request body must be valid JSON.");
+  const invalid = validateBody(body, { allowed: ["orderId", "lineItemId"], required: ["orderId", "lineItemId"] });
+  if (invalid) return invalid;
+  if (!validateGid(body.orderId, "Order").ok || !validateGid(body.lineItemId, "LineItem").ok) return invalidRequest();
 
   const orderResult = await getOrderById(body.orderId);
   if (!orderResult.body.success) return json(orderResult.status, orderResult.body);
@@ -294,11 +385,13 @@ async function handleLineItemSubstitutions(event) {
 
 async function handleDuplicateCheck(event) {
   if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
-  const auth = requireSession(event);
+  const auth = await requireSession(event);
   if (auth.error) return auth.error;
 
   const body = parseBody(event);
   if (!body) return error(400, "INVALID_REQUEST", "Request body must be valid JSON.");
+  const invalid = validateBody(body, { allowed: ["orderId", "lineItemId", "substituteVariantId", "customSubstituteTitle"] });
+  if (invalid) return invalid;
   const duplicate = await findDuplicate({
     orderId: body.orderId,
     lineItemId: body.lineItemId,
@@ -344,20 +437,29 @@ function manualPhoneHash(phone) {
 }
 
 async function handleSendManualSms(event) {
-  const limited = rateLimit(event, "send-manual-sms", 10);
-  if (limited) return limited;
   if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
-  const auth = requireSession(event);
-  if (auth.error) return auth.error;
+  const auth = await requireRole(event, "admin");
+  if (!auth.ok) return error(auth.status || 403, auth.code || "FORBIDDEN", auth.error || "You do not have permission to perform this action.");
+  const limited = await rateLimit(`sms-action:user:${auth.user.id}`, 10, 10 * 60);
+  if (limited) return limited;
 
   const body = parseBody(event);
   if (!body) return error(400, "INVALID_REQUEST", "Request body must be valid JSON.");
+  const invalid = validateBody(body, {
+    allowed: ["phone", "firstName", "unavailableItem", "substituteItem", "reference", "message", "consentConfirmed", "sendConfirmed", "idempotencyKey", "authorizedResend"],
+    required: ["phone", "message", "consentConfirmed", "sendConfirmed"]
+  });
+  if (invalid) return invalid;
+  if (body.sendConfirmed !== true) return error(400, "SEND_CONFIRMATION_REQUIRED", "Confirm this SMS before sending.");
   if (!body.consentConfirmed) {
     return error(400, "CONSENT_CONFIRMATION_REQUIRED", "Staff must confirm this manual recipient gave permission to receive this SMS.");
   }
 
-  const phone = String(body.phone || "").trim();
-  if (!isE164(phone)) return error(400, "PHONE_INVALID", "Phone number must be valid E.164 format.");
+  const phoneValidation = validateE164(body.phone);
+  if (!phoneValidation.ok) return error(400, "PHONE_INVALID", "Phone number must be valid E.164 format.");
+  const phone = phoneValidation.value;
+  const optOut = await getOptOutStatus(phone);
+  if (optOut?.status === "opted_out") return error(400, "RECIPIENT_OPTED_OUT", "This recipient has opted out. No SMS was sent.");
   const firstName = cleanManualText(body.firstName, "there", 60);
   const unavailableItem = cleanManualText(body.unavailableItem, "your requested item");
   const substituteItem = cleanManualText(body.substituteItem, "a substitute item");
@@ -399,7 +501,7 @@ async function handleSendManualSms(event) {
     customSubstitute: true,
     customSubstituteTitle: substituteItem,
     message: messageValidation.message,
-    staffIdentity: auth.session.staffName,
+    staffIdentity: auth.staffName,
     initialTwilioStatus: "created",
     latestTwilioStatus: "created",
     dryRun: undefined,
@@ -425,27 +527,41 @@ async function handleSendManualSms(event) {
     latestTwilioStatus: smsResult.body.providerStatus || "failed",
     failureReason: smsResult.body.success ? "" : smsResult.body.error
   });
+  await createAuditRecord({
+    type: smsResult.body.success ? "sms_send" : "sms_failure",
+    actor: auth.staffName,
+    messageRecordId: created.record.id,
+    details: { mode: "manual", dryRun: smsResult.body.dryRun, providerStatus: smsResult.body.providerStatus }
+  }).catch(() => {});
 
-  if (smsResult.log) console.error("Twilio manual send error:", smsResult.log);
-  console.log("Manual SMS processed.", {
+  if (smsResult.log) logger.error("Twilio manual send error", smsResult.log);
+  logger.info("Manual SMS processed", {
     recipient: redactPhone(phone),
     dryRun: smsResult.body.dryRun,
     providerStatus: smsResult.body.providerStatus,
-    staffIdentity: auth.session.staffName
+    staffIdentity: auth.staffName
   });
 
   return json(smsResult.status, { ...smsResult.body, record: publicRecord(updatedRecord || created.record) });
 }
 
 async function handleSendSubstitutionSms(event) {
-  const limited = rateLimit(event, "send-substitution-sms", 10);
-  if (limited) return limited;
   if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
-  const auth = requireSession(event);
+  const auth = await requireSession(event);
   if (auth.error) return auth.error;
+  const staffLimited = await rateLimit(`sms-action:user:${auth.session.user.id}`, 10, 10 * 60);
+  if (staffLimited) return staffLimited;
 
   const body = parseBody(event);
   if (!body) return error(400, "INVALID_REQUEST", "Request body must be valid JSON.");
+  const invalid = validateBody(body, {
+    allowed: ["orderId", "lineItemId", "substituteVariantId", "customSubstituteTitle", "message", "sendConfirmed", "idempotencyKey", "authorizedResend"],
+    required: ["orderId", "lineItemId", "sendConfirmed"]
+  });
+  if (invalid) return invalid;
+  if (body.sendConfirmed !== true) return error(400, "SEND_CONFIRMATION_REQUIRED", "Confirm this SMS before sending.");
+  if (!validateGid(body.orderId, "Order").ok || !validateGid(body.lineItemId, "LineItem").ok) return invalidRequest();
+  if (body.substituteVariantId && !validateGid(body.substituteVariantId, "ProductVariant").ok) return invalidRequest();
 
   const hasShopifySubstitute = Boolean(body.substituteVariantId);
   const customValidation = hasShopifySubstitute ? null : validateCustomSubstituteTitle(body.customSubstituteTitle);
@@ -458,6 +574,8 @@ async function handleSendSubstitutionSms(event) {
   const order = orderResult.body.order;
   const orderValidation = validateOrderForSending(order, body);
   if (orderValidation.error) return error(orderValidation.status, orderValidation.code, orderValidation.error);
+  const optOut = await getOptOutStatus(order.customer.phone);
+  if (optOut?.status === "opted_out") return error(400, "RECIPIENT_OPTED_OUT", "This recipient has opted out. No SMS was sent.");
 
   let substitute;
   if (hasShopifySubstitute) {
@@ -509,6 +627,8 @@ async function handleSendSubstitutionSms(event) {
       duplicate: publicRecord(duplicate)
     });
   }
+  const orderLimited = await rateLimit(`sms-order:${order.id}`, 3, 60 * 60);
+  if (orderLimited) return orderLimited;
 
   const created = await createMessageRecord({
     orderId: order.id,
@@ -549,11 +669,17 @@ async function handleSendSubstitutionSms(event) {
     latestTwilioStatus: smsResult.body.providerStatus || "failed",
     failureReason: smsResult.body.success ? "" : smsResult.body.error
   });
+  await createAuditRecord({
+    type: smsResult.body.success ? "sms_send" : "sms_failure",
+    actor: auth.session.staffName,
+    messageRecordId: created.record.id,
+    details: { mode: "substitution", orderName: order.name, dryRun: smsResult.body.dryRun, providerStatus: smsResult.body.providerStatus }
+  }).catch(() => {});
 
   if (smsResult.log) {
-    console.error("Twilio send error:", smsResult.log);
+    logger.error("Twilio send error", smsResult.log);
   }
-  console.log("Substitution SMS processed.", {
+  logger.info("Substitution SMS processed", {
     orderName: order.name,
     dryRun: smsResult.body.dryRun,
     providerStatus: smsResult.body.providerStatus,
@@ -564,7 +690,7 @@ async function handleSendSubstitutionSms(event) {
 }
 
 async function handleHistory(event) {
-  const auth = requireSession(event);
+  const auth = await requireSession(event);
   if (auth.error) return auth.error;
   const params = new URLSearchParams(event.rawQuery || "");
   try {
@@ -577,7 +703,7 @@ async function handleHistory(event) {
     });
     return json(200, { success: true, ...result });
   } catch (storageError) {
-    console.error("Message history storage read error:", storageError.message);
+    logger.error("Message history storage read error", { error: storageError.message });
     const limit = Math.min(Math.max(Number(params.get("limit") || 25), 1), 100);
     const page = Math.max(Number(params.get("page") || 1), 1);
     return json(200, {
@@ -594,7 +720,7 @@ async function handleHistory(event) {
 }
 
 async function handleDashboard(event) {
-  const auth = requireSession(event);
+  const auth = await requireSession(event);
   if (auth.error) return auth.error;
   const status = safeConfigStatus();
   let stats;
@@ -603,7 +729,7 @@ async function handleDashboard(event) {
     stats = await messageStats();
     status.storageHealthy = true;
   } catch (storageError) {
-    console.error("Dashboard storage read error:", storageError.message);
+    logger.error("Dashboard storage read error", { error: storageError.message });
     status.storageHealthy = false;
     warning = "Message history storage is not available yet. Dashboard totals will appear after Blob storage is initialized and the first message is recorded.";
     stats = {
@@ -649,7 +775,7 @@ function safeConfigStatus() {
 }
 
 async function handleConfigDiagnostics(event) {
-  const auth = requireSession(event);
+  const auth = await requireSession(event);
   if (auth.error) return auth.error;
   return json(200, { success: true, diagnostics: safeConfigDiagnostics(event) });
 }
@@ -674,6 +800,7 @@ async function buildRequestItems(order, inputItems = []) {
     }
     const substituteOptions = [];
     for (const variantId of optionIds) {
+      if (!validateGid(variantId, "ProductVariant").ok) return { ok: false, code: "SUBSTITUTE_INVALID", error: "One selected substitute is invalid." };
       const variantResult = await getVariantById(variantId);
       if (!variantResult.body.success) return { ok: false, code: "SUBSTITUTE_INVALID", error: "One selected substitute could not be loaded from Shopify." };
       const variant = variantResult.body.product;
@@ -718,20 +845,21 @@ async function createAndSendCustomerRequest({ event, body, auth, existingRequest
   if (orderValidation.error && orderValidation.code !== "LINE_ITEM_INVALID") {
     return error(orderValidation.status, orderValidation.code, orderValidation.error);
   }
+  const optOut = await getOptOutStatus(order.customer.phone);
+  if (optOut?.status === "opted_out") return error(400, "RECIPIENT_OPTED_OUT", "This recipient has opted out. No SMS was sent.");
 
   let request = existingRequest;
   let token = "";
-  let publicUrl = existingRequest?.publicUrl || "";
+  let publicUrl = "";
   if (!request) {
     const builtItems = await buildRequestItems(order, body.items);
     if (!builtItems.ok) return error(400, builtItems.code, builtItems.error);
+    const orderLimited = await rateLimit(`sms-order:${order.id}`, 3, 60 * 60);
+    if (orderLimited) return orderLimited;
     const expiryHours = [24, 48, 72].includes(Number(body.expiryHours)) ? Number(body.expiryHours) : 48;
     const created = await createSubstitutionRequest({
       shopifyOrderId: order.id,
       orderNumber: order.name,
-      customerFirstName: order.customer.firstName,
-      customerPhoneHash: hashPhone(order.customer.phone),
-      customerPhoneRedacted: redactPhone(order.customer.phone),
       items: builtItems.items,
       staffNote: cleanText(body.staffNote || "", 240),
       createdBy: auth.session.staffName,
@@ -742,6 +870,12 @@ async function createAndSendCustomerRequest({ event, body, auth, existingRequest
     request = created.record;
     token = created.token;
     publicUrl = created.publicUrl;
+  } else {
+    const rotated = await rotateSubstitutionRequestToken(request.requestId, publicBaseUrl(event), auth.session.staffName);
+    if (!rotated.ok) return error(500, rotated.code || "STORAGE_ERROR", rotated.error || "Substitution request link could not be created.");
+    request = rotated.record;
+    token = rotated.token;
+    publicUrl = rotated.publicUrl;
   }
 
   const message = responseSmsMessage(request.orderNumber, publicUrl);
@@ -786,28 +920,38 @@ async function createAndSendCustomerRequest({ event, body, auth, existingRequest
     messageRecordId: history.record.id,
     failureReason: smsResult.body.success ? "" : smsResult.body.error
   }, auth.session.staffName);
-  if (smsResult.log) console.error("Twilio request send error:", smsResult.log);
+  await createAuditRecord({
+    type: smsResult.body.success ? "sms_send" : "sms_failure",
+    actor: auth.session.staffName,
+    messageRecordId: history.record.id,
+    details: { mode: "customer_response_link", requestId: request.requestId, dryRun: smsResult.body.dryRun, providerStatus: smsResult.body.providerStatus }
+  }).catch(() => {});
+  if (smsResult.log) logger.error("Twilio request send error", smsResult.log);
   return json(smsResult.status, {
     ...smsResult.body,
-    request: safeRequestForStaff(savedRequest || request, true),
+    request: safeRequestForStaff({ ...(savedRequest || request), transientPublicUrl: publicUrl }, true),
     publicUrl,
     messageRecordId: (updatedHistory || history.record).id
   });
 }
 
 async function handleCreateSubstitutionRequest(event) {
-  const limited = rateLimit(event, "create-substitution-request", 10);
-  if (limited) return limited;
   if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
-  const auth = requireSession(event);
+  const auth = await requireSession(event);
   if (auth.error) return auth.error;
+  const staffLimited = await rateLimit(`sms-action:user:${auth.session.user.id}`, 10, 10 * 60);
+  if (staffLimited) return staffLimited;
   const body = parseBody(event);
   if (!body) return error(400, "INVALID_REQUEST", "Request body must be valid JSON.");
+  const invalid = validateBody(body, { allowed: ["orderId", "items", "expiryHours", "staffNote", "sendConfirmed", "idempotencyKey"], required: ["orderId", "items", "sendConfirmed"] });
+  if (invalid) return invalid;
+  if (body.sendConfirmed !== true) return error(400, "SEND_CONFIRMATION_REQUIRED", "Confirm this SMS before sending.");
+  if (!validateGid(body.orderId, "Order").ok) return invalidRequest();
   return createAndSendCustomerRequest({ event, body, auth });
 }
 
 async function handleListSubstitutionRequests(event) {
-  const auth = requireSession(event);
+  const auth = await requireSession(event);
   if (auth.error) return auth.error;
   const params = new URLSearchParams(event.rawQuery || "");
   try {
@@ -820,13 +964,13 @@ async function handleListSubstitutionRequests(event) {
     });
     return json(200, { success: true, ...result });
   } catch (storageError) {
-    console.error("Substitution request storage read error:", storageError.message);
+    logger.error("Substitution request storage read error", { error: storageError.message });
     return json(200, { success: true, requests: [], page: 1, limit: 50, total: 0, totalPages: 1, storageHealthy: false, warning: "Substitution request storage is not available yet." });
   }
 }
 
 async function handleGetSubstitutionRequest(event, route) {
-  const auth = requireSession(event);
+  const auth = await requireSession(event);
   if (auth.error) return auth.error;
   const id = route.replace(/^substitution-requests\//, "").replace(/\/.*$/, "");
   const record = await getSubstitutionRequest(id);
@@ -836,14 +980,20 @@ async function handleGetSubstitutionRequest(event, route) {
 
 async function handleRequestAction(event, route) {
   if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
-  const auth = requireSession(event);
+  const auth = await requireSession(event);
   if (auth.error) return auth.error;
   const match = route.match(/^substitution-requests\/([^/]+)\/(revoke|complete|review|resend)$/);
   if (!match) return error(404, "NOT_FOUND", "Not found.");
   const [, id, action] = match;
   if (action === "resend") {
+    const body = parseBody(event);
+    if (!body?.sendConfirmed) return error(400, "SEND_CONFIRMATION_REQUIRED", "Confirm this SMS before sending.");
     const record = await getSubstitutionRequest(id);
     if (!record) return error(404, "NOT_FOUND", "Substitution request was not found.");
+    const staffLimited = await rateLimit(`sms-action:user:${auth.session.user.id}`, 10, 10 * 60);
+    if (staffLimited) return staffLimited;
+    const orderLimited = await rateLimit(`sms-order:${record.shopifyOrderId || record.orderNumber}`, 3, 60 * 60);
+    if (orderLimited) return orderLimited;
     return createAndSendCustomerRequest({ event, body: { orderId: record.shopifyOrderId, idempotencyKey: `request-resend:${id}:${Date.now()}` }, auth, existingRequest: record });
   }
   const status = action === "revoke" ? "revoked" : action === "complete" ? "completed" : "staff_reviewing";
@@ -853,7 +1003,7 @@ async function handleRequestAction(event, route) {
 }
 
 async function handlePublicRequest(event) {
-  const limited = rateLimit(event, "public-substitution-read", 40);
+  const limited = await rateLimit(`public-read:ip:${clientIp(event)}`, 30, 10 * 60);
   if (limited) return limited;
   const token = new URLSearchParams(event.rawQuery || "").get("token") || routeName(event).replace(/^public\/substitution-request\//, "");
   if (!token) return error(404, "REQUEST_UNAVAILABLE", "This request is not available.");
@@ -863,16 +1013,32 @@ async function handlePublicRequest(event) {
 }
 
 async function handlePublicSubmit(event) {
-  const limited = rateLimit(event, "public-substitution-submit", 12);
-  if (limited) return limited;
+  const ipLimited = await rateLimit(`public-submit:ip:${clientIp(event)}`, 5, 10 * 60);
+  if (ipLimited) return ipLimited;
+  const tokenForLimit = (() => {
+    const parsed = parseBody(event);
+    return parsed?.token || "";
+  })();
+  if (tokenForLimit) {
+    const tokenLimited = await rateLimit(`public-submit:token:${tokenForLimit}`, 5, 10 * 60);
+    if (tokenLimited) return tokenLimited;
+  }
   if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
   const body = parseBody(event);
   if (!body) return error(400, "INVALID_REQUEST", "Request body must be valid JSON.");
+  const invalid = validateBody(body, { allowed: ["token", "choices"], required: ["token", "choices"] });
+  if (invalid) return invalid;
+  if (!Array.isArray(body.choices) || body.choices.length > 10) return invalidRequest();
+  for (const choice of body.choices) {
+    const choiceInvalid = validateBody(choice, { allowed: ["requestItemId", "type", "optionId", "note"], required: ["requestItemId", "type"] });
+    if (choiceInvalid) return choiceInvalid;
+  }
   const result = await submitSubstitutionResponse(body.token, body.choices);
-  if (!result.ok) return error(result.status || 400, result.code || "INVALID_RESPONSE", result.error || "Your response could not be saved.");
+  if (!result.ok) return error(result.status || 400, result.code || "INVALID_RESPONSE", "This request is not available.");
   return json(200, {
     success: true,
-    message: "Thank you - we've received your choices. Our team will review them before updating your order.",
+    alreadySubmitted: Boolean(result.alreadySubmitted),
+    message: result.alreadySubmitted ? "We already received your choices. Our team will review them before updating your order." : "Thank you - we've received your choices. Our team will review them before updating your order.",
     request: safeRequestForCustomer(result.record)
   });
 }
@@ -881,8 +1047,8 @@ async function handleInitializeBlobs(event, blobConnection = { connected: false,
   if (String(process.env.BLOB_INIT_ENABLED || "").toLowerCase() !== "true") {
     return error(403, "BLOB_INIT_DISABLED", "Blob initialization is disabled. Temporarily set BLOB_INIT_ENABLED=true in Netlify, run initialization from Settings, then set it back to false.");
   }
-  const auth = requireSession(event);
-  if (auth.error) return auth.error;
+  const auth = await requireRole(event, "admin");
+  if (!auth.ok) return error(auth.status || 403, auth.code || "FORBIDDEN", auth.error || "You do not have permission to perform this action.");
   try {
     const result = await initializeDataStores();
     return json(200, { success: true, ...result });
@@ -897,19 +1063,19 @@ async function handleInitializeBlobs(event, blobConnection = { connected: false,
       errorName: initError.cause?.name || initError.name || "",
       blobContext: blobConnection.connected ? "lambda-payload" : blobConnection.reason
     };
-    console.error("Blob initialization error:", diagnostic);
+    logger.error("Blob initialization error", diagnostic);
     return storageErrorResponse(500, "STORAGE_ERROR", `Blob initialization failed during ${diagnostic.stage}.`, diagnostic);
   }
 }
 
 async function handleTemplates(event) {
-  const auth = requireSession(event);
+  const auth = await requireSession(event);
   if (auth.error) return auth.error;
   if (event.httpMethod === "GET") {
     try {
       return json(200, { success: true, templates: await listTemplates(), storageHealthy: true });
     } catch (storageError) {
-      console.error("Template storage read error:", storageError.message);
+      logger.error("Template storage read error", { error: storageError.message });
       return json(200, {
         success: true,
         templates: [defaultTemplate()],
@@ -925,7 +1091,7 @@ async function handleTemplates(event) {
   try {
     result = await saveTemplate(body);
   } catch (storageError) {
-    console.error("Template save error:", storageError.message);
+    logger.error("Template save error", { error: storageError.message });
     return error(500, "STORAGE_ERROR", `Template could not be saved: ${safeErrorDetail(storageError)}`);
   }
   if (!result.ok) return error(400, result.code, result.error);
@@ -933,14 +1099,14 @@ async function handleTemplates(event) {
 }
 
 async function handleTemplateArchive(event, route) {
-  const auth = requireSession(event);
+  const auth = await requireSession(event);
   if (auth.error) return auth.error;
   const id = decodeURIComponent(route.replace(/^templates\//, "").replace(/\/archive$/, ""));
   let result;
   try {
     result = await archiveTemplate(id);
   } catch (storageError) {
-    console.error("Template archive error:", storageError.message);
+    logger.error("Template archive error", { error: storageError.message });
     return error(500, "STORAGE_ERROR", `Template could not be archived: ${safeErrorDetail(storageError)}`);
   }
   if (!result.ok) return error(400, result.code, result.error);
@@ -948,9 +1114,14 @@ async function handleTemplateArchive(event, route) {
 }
 
 async function handleBackup(event, route) {
-  const auth = requireSession(event);
+  const auth = await requireSession(event);
   if (auth.error) return auth.error;
   const payload = await backupPayload();
+  await createAuditRecord({
+    type: "backup_exported",
+    actor: auth.session.staffName,
+    details: { route, format: route.endsWith(".csv") ? "csv" : "json" }
+  }).catch(() => {});
   if (route === "backup/messages.csv") {
     return {
       statusCode: 200,
@@ -967,8 +1138,22 @@ async function handleBackup(event, route) {
   });
 }
 
+async function handleAdminCleanup(event) {
+  const auth = await requireSession(event);
+  if (auth.error) return auth.error;
+  const sessions = await cleanupExpiredSessions();
+  const rateLimits = await cleanupRateLimitRecords({ olderThan: Date.now(), max: 100 });
+  const data = await cleanupDataStoreRecords({ max: 100 });
+  await createAuditRecord({
+    type: "admin_cleanup_run",
+    actor: auth.session.staffName,
+    details: { sessions, rateLimits, data }
+  }).catch(() => {});
+  return json(200, { success: true, cleanup: { sessions, rateLimits, data } });
+}
+
 async function handleHistoryRecord(event, route) {
-  const auth = requireSession(event);
+  const auth = await requireSession(event);
   if (auth.error) return auth.error;
   const id = route.replace(/^message-history\//, "");
   const record = await getMessageRecord(id);
@@ -978,27 +1163,103 @@ async function handleHistoryRecord(event, route) {
 
 async function handleTwilioStatus(event) {
   const params = parseForm(event);
-  const host = event.headers.host || event.headers.Host;
-  const proto = event.headers["x-forwarded-proto"] || event.headers["X-Forwarded-Proto"] || "https";
-  const url = `${proto}://${host}${event.path}${event.rawQuery ? `?${event.rawQuery}` : ""}`;
+  const url = externallyVisibleWebhookUrl(event, "twilio-status");
   const signature = event.headers["x-twilio-signature"] || event.headers["X-Twilio-Signature"];
   if (!validateTwilioSignature({ url, params, signature })) {
+    await createAuditRecord({ type: "invalid_twilio_signature", details: { webhook: "delivery_status" } }).catch(() => {});
     return error(403, "TWILIO_ERROR", "Invalid Twilio webhook signature.");
   }
-  const recordId = new URLSearchParams(event.rawQuery || "").get("recordId") || params.recordId;
-  if (!recordId) return error(400, "INVALID_REQUEST", "Missing message record ID.");
-  const status = params.MessageStatus || params.SmsStatus || "";
-  const record = await updateMessageStatus(recordId, status);
+  const messageSid = params.MessageSid || params.SmsSid || "";
+  if (!messageSid) return error(400, "INVALID_REQUEST", "Missing Twilio message SID.");
+  const status = String(params.MessageStatus || params.SmsStatus || "").trim().toLowerCase();
+  if (!ALLOWED_TWILIO_STATUSES.has(status)) return error(400, "INVALID_REQUEST", "Invalid Twilio status.");
+  const associatedRecordId = new URLSearchParams(event.rawQuery || "").get("recordId") || params.recordId || "";
+  const processed = await recordProcessedTwilioMessage({
+    messageSid,
+    fromRedacted: redactPhone(params.From || ""),
+    toRedacted: redactPhone(params.To || ""),
+    processingStatus: `delivery_${status}`,
+    type: "delivery_status",
+    associatedRecordId
+  });
+  if (processed.duplicate) return json(200, { success: true, duplicate: true });
+  const record = await updateMessageStatusBySid(messageSid, status);
   if (!record) return error(404, "NOT_FOUND", "Message record was not found.");
   return json(200, { success: true });
 }
 
+async function handleTwilioInbound(event) {
+  const params = parseForm(event);
+  const url = externallyVisibleWebhookUrl(event, "twilio-inbound");
+  const signature = event.headers["x-twilio-signature"] || event.headers["X-Twilio-Signature"];
+  if (!validateTwilioSignature({ url, params, signature })) {
+    await createAuditRecord({ type: "invalid_twilio_signature", details: { webhook: "inbound" } }).catch(() => {});
+    return error(403, "TWILIO_ERROR", "Invalid Twilio webhook signature.");
+  }
+  const messageSid = params.MessageSid || params.SmsSid || "";
+  if (!messageSid) return twiml();
+  const from = String(params.From || "").trim();
+  const to = String(params.To || "").trim();
+  const keyword = String(params.Body || "").trim().split(/\s+/)[0]?.toUpperCase() || "";
+  const processed = await recordProcessedTwilioMessage({
+    messageSid,
+    fromRedacted: redactPhone(from),
+    toRedacted: redactPhone(to),
+    processingStatus: STOP_KEYWORDS.has(keyword) ? "opted_out" : HELP_KEYWORDS.has(keyword) ? "help_requested" : "received",
+    type: "inbound_message",
+    associatedRecordId: params.RequestId || ""
+  });
+  if (processed.duplicate) return twiml();
+  if (STOP_KEYWORDS.has(keyword)) {
+    await saveOptOutStatus({ phone: from, fromRedacted: redactPhone(from), toRedacted: redactPhone(to), messageSid, keyword, status: "opted_out" });
+    return twiml("You have been opted out and will not receive further non-essential Welkom USA SMS messages.");
+  }
+  if (HELP_KEYWORDS.has(keyword)) {
+    return twiml("Welkom USA support: reply STOP to opt out. For order help, please contact Welkom USA customer service.");
+  }
+  return twiml();
+}
+
+async function handleShopifyWebhook(event) {
+  const secret = process.env.SHOPIFY_WEBHOOK_SECRET || process.env.SHOPIFY_CLIENT_SECRET || "";
+  if (!secret) return error(500, "SHOPIFY_WEBHOOK_ERROR", "Shopify webhook secret is not configured.");
+  const supplied = event.headers["x-shopify-hmac-sha256"] || event.headers["X-Shopify-Hmac-Sha256"] || "";
+  const expected = crypto.createHmac("sha256", secret).update(event.body || "", "utf8").digest("base64");
+  if (!timingSafeEqualText(supplied, expected)) {
+    await createAuditRecord({ type: "invalid_shopify_hmac", details: { topic: event.headers["x-shopify-topic"] || event.headers["X-Shopify-Topic"] || "" } }).catch(() => {});
+    return error(403, "SHOPIFY_WEBHOOK_ERROR", "Invalid Shopify webhook signature.");
+  }
+  const shopDomain = String(event.headers["x-shopify-shop-domain"] || event.headers["X-Shopify-Shop-Domain"] || "").trim().toLowerCase();
+  const expectedShopDomain = String(process.env.SHOPIFY_SHOP_DOMAIN || "welkom-usa.myshopify.com").trim().toLowerCase();
+  if (shopDomain && shopDomain !== expectedShopDomain) return error(403, "SHOPIFY_WEBHOOK_ERROR", "Invalid Shopify shop domain.");
+  const topic = String(event.headers["x-shopify-topic"] || event.headers["X-Shopify-Topic"] || "").trim().toLowerCase();
+  if (!ALLOWED_SHOPIFY_WEBHOOK_TOPICS.has(topic)) return error(400, "SHOPIFY_WEBHOOK_ERROR", "Unexpected Shopify webhook topic.");
+  const deliveryId = event.headers["x-shopify-webhook-id"] || event.headers["X-Shopify-Webhook-Id"] || "";
+  if (!deliveryId || !/^[A-Za-z0-9._:-]{6,160}$/.test(String(deliveryId))) return error(400, "SHOPIFY_WEBHOOK_ERROR", "Missing Shopify webhook delivery ID.");
+  if (deliveryId) {
+    const duplicate = await checkRateLimit({
+      key: `shopify-webhook-id:${deliveryId}`,
+      limit: 1,
+      windowSeconds: 24 * 60 * 60,
+      blockSeconds: 24 * 60 * 60
+    });
+    if (!duplicate.ok) return json(200, { success: true, duplicate: true });
+  }
+  return json(200, { success: true });
+}
+
 exports.handler = async (event) => {
+  activeEvent = event;
   const blobConnection = connectNetlifyBlobs(event);
   const route = routeName(event);
+  if (event.httpMethod === "OPTIONS") return optionsResponse();
   if (bodyTooLarge(event)) return error(413, "INVALID_REQUEST", "Request body is too large.");
+  const denied = await authorizeRegisteredEndpoint(event, route);
+  if (denied) return denied;
 
   if (route === "twilio-status" && event.httpMethod === "POST") return handleTwilioStatus(event);
+  if (route === "twilio-inbound" && event.httpMethod === "POST") return handleTwilioInbound(event);
+  if (route === "shopify-webhook" && event.httpMethod === "POST") return handleShopifyWebhook(event);
   if ((route === "public/substitution-request" || route.startsWith("public/substitution-request/")) && event.httpMethod === "GET") return handlePublicRequest(event);
   if (route === "public/substitution-response" && event.httpMethod === "POST") return handlePublicSubmit(event);
   if (route === "session" && event.httpMethod === "GET") return handleSession(event);
@@ -1012,13 +1273,10 @@ exports.handler = async (event) => {
   if (route === "backup.json" && event.httpMethod === "GET") return handleBackup(event, route);
   if (route === "backup/messages.csv" && event.httpMethod === "GET") return handleBackup(event, route);
 
-  if (event.httpMethod !== "POST") {
-    return error(405, "INVALID_REQUEST", "Method not allowed.");
-  }
-
   if (route === "login") return handleLogin(event);
   if (route === "logout") return handleLogout(event);
   if (route === "admin/init-blobs") return handleInitializeBlobs(event, blobConnection);
+  if (route === "admin/cleanup") return handleAdminCleanup(event);
   if (route === "templates") return handleTemplates(event);
   if (/^templates\/.+\/archive$/.test(route)) return handleTemplateArchive(event, route);
   if (route === "order-search") return handleOrderSearch(event);
@@ -1030,5 +1288,5 @@ exports.handler = async (event) => {
   if (route === "substitution-requests") return handleCreateSubstitutionRequest(event);
   if (/^substitution-requests\/[^/]+\/(revoke|complete|review|resend)$/.test(route)) return handleRequestAction(event, route);
 
-  return error(404, "NOT_FOUND", "Not found.");
+  return publicError(404, "NOT_FOUND");
 };

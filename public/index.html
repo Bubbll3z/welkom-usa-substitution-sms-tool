@@ -1208,6 +1208,10 @@
                   <span id="searchState" class="fine">Ready</span>
                 </div>
                 <div id="loginPasswordField" class="field">
+                  <label for="username">Staff username</label>
+                  <input id="username" type="text" autocomplete="username" placeholder="your username">
+                </div>
+                <div id="loginPasswordFieldPassword" class="field">
                   <label for="password">Staff password</label>
                   <input id="password" type="password" autocomplete="current-password">
                 </div>
@@ -1626,7 +1630,9 @@
       backupPage: document.getElementById("backupPage"),
       respondPage: document.getElementById("respondPage"),
       loginPasswordField: document.getElementById("loginPasswordField"),
+      loginPasswordFieldPassword: document.getElementById("loginPasswordFieldPassword"),
       loginActions: document.getElementById("loginActions"),
+      username: document.getElementById("username"),
       password: document.getElementById("password"),
       loginButton: document.getElementById("loginButton"),
       logoutButton: document.getElementById("logoutButton"),
@@ -1729,6 +1735,8 @@
     const state = {
       authenticated: false,
       staffName: "",
+      role: "",
+      csrfToken: "",
       order: null,
       unavailableItem: null,
       substituteItem: null,
@@ -1899,6 +1907,7 @@
         ...options,
         headers: {
           ...(options.body ? { "Content-Type": "application/json" } : {}),
+          ...(state.csrfToken && !["GET", "HEAD", "OPTIONS"].includes(String(options.method || "GET").toUpperCase()) ? { "X-CSRF-Token": state.csrfToken } : {}),
           ...(options.headers || {})
         }
       });
@@ -1913,12 +1922,16 @@
       return result;
     }
 
-    function setAuth(authenticated, staffName = "", authRequired = true) {
+    function setAuth(authenticated, staffName = "", authRequired = true, role = "", csrfToken = "") {
       state.authenticated = authenticated;
       state.staffName = staffName;
       state.authRequired = authRequired;
+      state.role = role || "";
+      state.csrfToken = csrfToken || "";
       els.loginPasswordField.classList.toggle("hidden", !authRequired);
+      els.loginPasswordFieldPassword.classList.toggle("hidden", !authRequired);
       els.loginActions.classList.toggle("hidden", !authRequired);
+      els.username.disabled = authenticated || !authRequired;
       els.password.disabled = authenticated || !authRequired;
       els.loginButton.disabled = authenticated || !authRequired;
       els.logoutButton.disabled = !authenticated || !authRequired;
@@ -1926,14 +1939,17 @@
       els.searchButton.disabled = !authenticated;
       els.subSearchButton.disabled = !authenticated;
       els.manualMode.disabled = !authenticated;
+      [els.templatesNav, els.settingsNav, els.backupNav].forEach((node) => {
+        node.classList.toggle("hidden", !authenticated || role !== "admin");
+      });
       els.subSearchState.textContent = authenticated ? "Shopify suggestions" : "Log in first";
       updateSendState();
     }
 
     async function checkSession() {
       try {
-        const result = await api("/api/session");
-        setAuth(true, result.staffName, result.authRequired !== false);
+        const result = await api("/.netlify/functions/auth-me");
+        setAuth(true, result.staffName, result.authRequired !== false, result.role, result.csrfToken);
         if (result.authRequired !== false) toast("success", `Logged in as ${result.staffName}.`);
         await loadHistory();
         await navigate(state.currentPage, false);
@@ -1944,17 +1960,21 @@
     }
 
     async function login() {
+      if (!els.username.value) {
+        toast("error", "Enter your staff username first.");
+        return;
+      }
       if (!els.password.value) {
         toast("error", "Enter the staff password first.");
         return;
       }
       try {
-        const result = await api("/api/login", {
+        const result = await api("/.netlify/functions/auth-login", {
           method: "POST",
-          body: JSON.stringify({ password: els.password.value, staffName: "Welkom USA Staff" })
+          body: JSON.stringify({ username: els.username.value, password: els.password.value })
         });
         els.password.value = "";
-        setAuth(true, result.staffName, result.authRequired !== false);
+        setAuth(true, result.staffName, result.authRequired !== false, result.role, result.csrfToken);
         toast("success", "Logged in.");
         await loadHistory();
         await navigate(state.currentPage, false);
@@ -1965,10 +1985,10 @@
 
     async function logout() {
       try {
-        await api("/api/logout", { method: "POST" });
+        await api("/.netlify/functions/auth-logout", { method: "POST" });
       } catch (error) {
       } finally {
-        setAuth(false, "", true);
+        setAuth(false, "", true, "", "");
         toast("success", "Logged out.");
       }
     }
@@ -1992,6 +2012,7 @@
     }
 
     function formatAddress(order) {
+      if (order?.shippingAddressDisplay) return order.shippingAddressDisplay;
       const address = order?.shippingAddress || {};
       return [address.name, address.address1, address.address2, address.city, address.province, address.zip, address.country].filter(Boolean).join(", ");
     }
@@ -2057,7 +2078,7 @@
 
     function updateConsentBadge() {
       const granted = Boolean(state.order?.smsConsent?.granted);
-      const email = state.order?.customer?.email || "";
+      const email = state.order?.customer?.maskedEmail || "";
       els.consentBadge.className = granted ? "badge" : "badge error";
       els.consentBadge.textContent = granted ? "SMS Opt-In" : "No SMS Consent";
       if (granted) {
@@ -2138,7 +2159,7 @@
       appendDetails(els.customerDetails, [
         ["Name", `${order.customer?.firstName || ""} ${order.customer?.lastName || ""}`.trim()],
         ["Phone", order.customer?.redactedPhone || "-"],
-        ["Email", order.customer?.email || "-"],
+        ["Email", order.customer?.maskedEmail || "-"],
         ["Order Date", formatDate(order.processedAt)],
         ["Shipping Address", formatAddress(order)]
       ]);
@@ -2446,6 +2467,7 @@
               quantity: item.quantity,
               substituteVariantIds: item.substituteVariantIds
             })),
+            sendConfirmed: true,
             idempotencyKey: `customer-request|${state.order.id}|${Date.now()}`
           })
         });
@@ -2535,7 +2557,7 @@
         const response = await fetch(manual ? "/api/send-manual-sms" : "/api/send-substitution-sms", {
           method: "POST",
           credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...(state.csrfToken ? { "X-CSRF-Token": state.csrfToken } : {}) },
           body: JSON.stringify(manual ? {
             phone: els.manualPhone.value.trim(),
             firstName: els.manualFirstName.value,
@@ -2543,6 +2565,7 @@
             substituteItem: els.manualSubstitute.value,
             reference: els.manualReference.value,
             consentConfirmed: els.manualConsent.checked,
+            sendConfirmed: true,
             message: els.message.value,
             idempotencyKey: idempotencyKey(),
             authorizedResend: state.authorizedResend
@@ -2552,6 +2575,7 @@
             substituteVariantId: state.substituteItem.customSubstitute ? "" : state.substituteItem.id,
             customSubstituteTitle: state.substituteItem.customSubstitute ? state.substituteItem.title : "",
             message: els.message.value,
+            sendConfirmed: true,
             idempotencyKey: idempotencyKey(),
             authorizedResend: state.authorizedResend
           })
@@ -2720,7 +2744,7 @@
 
     async function requestAction(requestId, action) {
       try {
-        await api(`/api/substitution-requests/${encodeURIComponent(requestId)}/${action}`, { method: "POST", body: JSON.stringify({}) });
+        await api(`/api/substitution-requests/${encodeURIComponent(requestId)}/${action}`, { method: "POST", body: JSON.stringify({ sendConfirmed: action === "resend" }) });
         toast("success", "Request updated.");
         await loadSubstitutionRequests();
       } catch (error) {
@@ -3140,6 +3164,9 @@
 
     els.loginButton.addEventListener("click", login);
     els.logoutButton.addEventListener("click", logout);
+    els.username.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") login();
+    });
     els.password.addEventListener("keydown", (event) => {
       if (event.key === "Enter") login();
     });

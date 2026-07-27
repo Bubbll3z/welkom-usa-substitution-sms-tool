@@ -1,5 +1,6 @@
 const crypto = require("node:crypto");
 const { getStore } = require("@netlify/blobs");
+const { redactObject, redactString } = require("./safe-logger");
 
 const SCHEMA_VERSION = 1;
 const DEFAULT_TEMPLATE_BODY = "Welkom USA: Hi [FIRST NAME], [UNAVAILABLE ITEM] in order #[ORDER NUMBER] is unavailable. We can substitute it with [SUBSTITUTE ITEM]. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.";
@@ -80,6 +81,9 @@ function memoryStore(kind) {
     async setJSON(key, value, options = {}) {
       await this.set(key, JSON.stringify(value), options);
     },
+    async delete(key) {
+      backing.delete(key);
+    },
     async list(options = {}) {
       const prefix = options.prefix || "";
       return {
@@ -106,12 +110,17 @@ function createResponseToken() {
 }
 
 function hashResponseToken(token, env = process.env) {
-  const pepper = String(env.SUBSTITUTION_TOKEN_PEPPER || env.SESSION_SECRET || "");
+  const pepper = String(env.SUBSTITUTION_TOKEN_PEPPER || "");
   return crypto.createHash("sha256").update(`${pepper}:${String(token || "")}`).digest("hex");
 }
 
 function hashIdempotency(parts) {
   return crypto.createHash("sha256").update(parts.filter(Boolean).join("|")).digest("hex");
+}
+
+function hashPhoneNumber(phone, env = process.env) {
+  const pepper = String(env.RATE_LIMIT_KEY_PEPPER || env.SUBSTITUTION_TOKEN_PEPPER || "");
+  return crypto.createHash("sha256").update(`${pepper}:phone:${String(phone || "").trim()}`).digest("hex");
 }
 
 function duplicateKey({ orderId, lineItemId, unavailableLineItemId, substituteVariantId, customSubstituteTitle }) {
@@ -133,7 +142,7 @@ function safeJson(value) {
 }
 
 function scrubText(value) {
-  return String(value ?? "")
+  return redactString(String(value ?? ""))
     .replace(/shpat_[A-Za-z0-9_]+/g, "[redacted-shopify-token]")
     .replace(/\bAC[a-fA-F0-9]{32}\b/g, "[redacted-twilio-sid]")
     .replace(/\bSK[a-fA-F0-9]{32}\b/g, "[redacted-twilio-api-key]")
@@ -142,12 +151,7 @@ function scrubText(value) {
 }
 
 function scrubObject(value) {
-  if (Array.isArray(value)) return value.map(scrubObject);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [scrubText(key), scrubObject(item)]));
-  }
-  if (typeof value === "string") return scrubText(value);
-  return value;
+  return redactObject(value);
 }
 
 function scrubCustomerText(value, max = 240) {
@@ -177,6 +181,14 @@ function priceDifference(originalPrice, substitutePrice) {
 async function setJson(targetStore, key, value, options = {}) {
   if (typeof targetStore.setJSON === "function") return targetStore.setJSON(key, value, options);
   return targetStore.set(key, JSON.stringify(value), options);
+}
+
+async function deleteKey(targetStore, key) {
+  if (typeof targetStore.delete === "function") {
+    await targetStore.delete(key).catch(() => {});
+    return true;
+  }
+  return false;
 }
 
 function initializationFailure(stage, storeKind, recordType, cause, fieldName = "", rule = "") {
@@ -256,8 +268,6 @@ function safeRequestForStaff(record, includeToken = false) {
     schemaVersion: record.schemaVersion || SCHEMA_VERSION,
     requestId: record.requestId,
     orderNumber: scrubText(record.orderNumber),
-    customerFirstName: scrubText(record.customerFirstName),
-    customerPhoneRedacted: record.customerPhoneRedacted,
     store: record.store,
     status,
     items: scrubObject(record.items || []),
@@ -271,7 +281,8 @@ function safeRequestForStaff(record, includeToken = false) {
     revokedAt: record.revokedAt,
     sms: scrubObject(record.sms || {}),
     audit: scrubObject(record.audit || []),
-    publicUrl: includeToken ? scrubText(record.publicUrl || "") : "",
+    publicUrl: includeToken ? scrubText(record.transientPublicUrl || "") : "",
+    submissionVersion: Number(record.submissionVersion || 0),
     submittedChoices: scrubObject(record.submittedChoices || [])
   };
 }
@@ -286,7 +297,6 @@ function safeRequestForCustomer(record) {
     originalPrice: item.originalPrice || "",
     currency: item.currency || currencyFromMoney(item.originalPrice),
     quantity: item.quantity,
-    staffNote: scrubText(item.staffNote || record.staffNote || ""),
     substituteOptions: (item.substituteOptions || []).map((option) => ({
       optionId: option.optionId,
       productTitle: scrubText(option.productTitle),
@@ -303,15 +313,14 @@ function safeRequestForCustomer(record) {
     requestId: record.requestId,
     orderNumber: scrubText(record.orderNumber),
     maskedOrderReference: record.orderNumber ? `order #${String(record.orderNumber).replace(/^#/, "")}` : "your order",
-    customerFirstName: scrubText(record.customerFirstName),
     status,
     expiresAt: record.expiresAt,
     openedAt: record.openedAt,
     submittedAt: record.submittedAt,
     revokedAt: record.revokedAt,
     completedAt: record.completedAt,
-    staffNote: scrubText(record.staffNote),
     items: safeItems,
+    submissionVersion: Number(record.submissionVersion || 0),
     submittedChoices: scrubObject(record.submittedChoices || [])
   };
 }
@@ -334,8 +343,8 @@ function appendRequestAudit(record, type, actor = "system", details = {}) {
 
 function validateSubstitutionRequestInput(data) {
   if (!data || typeof data !== "object") return { ok: false, code: "INVALID_REQUEST", error: "Request is invalid." };
-  if (!data.shopifyOrderId || !data.orderNumber || !data.customerPhoneRedacted || !data.customerPhoneHash) {
-    return { ok: false, code: "INVALID_REQUEST", error: "Order and customer contact details are required." };
+  if (!data.shopifyOrderId || !data.orderNumber) {
+    return { ok: false, code: "INVALID_REQUEST", error: "Order reference is required." };
   }
   const items = Array.isArray(data.items) ? data.items : [];
   if (!items.length) return { ok: false, code: "INVALID_REQUEST", error: "At least one unavailable item is required." };
@@ -371,9 +380,6 @@ async function createSubstitutionRequest(data, env = process.env) {
     tokenHash,
     shopifyOrderId: data.shopifyOrderId,
     orderNumber: String(data.orderNumber || "").replace(/^#/, ""),
-    customerFirstName: scrubCustomerText(data.customerFirstName, 80),
-    customerPhoneHash: data.customerPhoneHash,
-    customerPhoneRedacted: data.customerPhoneRedacted,
     store: "welkom-usa",
     status: data.status || "awaiting_customer",
     items: data.items.map((item) => ({
@@ -412,7 +418,7 @@ async function createSubstitutionRequest(data, env = process.env) {
     completedAt: null,
     revokedAt: null,
     sms: data.sms || {},
-    publicUrl: baseUrl ? `${baseUrl}/respond/${token}` : `/respond/${token}`,
+    submissionVersion: 0,
     submittedChoices: []
   }, "request_created", data.createdBy || "staff");
 
@@ -425,7 +431,7 @@ async function createSubstitutionRequest(data, env = process.env) {
       ok: true,
       token,
       publicUrl: baseUrl ? `${baseUrl}/respond/${token}` : `/respond/${token}`,
-      request: safeRequestForStaff(record, true),
+      request: safeRequestForStaff({ ...record, transientPublicUrl: baseUrl ? `${baseUrl}/respond/${token}` : `/respond/${token}` }, true),
       record
     };
   } catch (error) {
@@ -444,7 +450,29 @@ async function getSubstitutionRequestByToken(token, env = process.env) {
   const tokenHash = hashResponseToken(token, env);
   const pointer = await getJsonSafe(store("requests", env), `tokens/${tokenHash}`);
   if (!pointer?.requestId) return null;
-  return getSubstitutionRequest(pointer.requestId, env);
+  const record = await getSubstitutionRequest(pointer.requestId, env);
+  return record?.tokenHash === tokenHash ? record : null;
+}
+
+async function rotateSubstitutionRequestToken(id, baseUrl = "", actor = "staff", env = process.env) {
+  const record = await getSubstitutionRequest(id, env);
+  if (!record) return { ok: false, code: "NOT_FOUND", error: "Substitution request was not found." };
+  const token = createResponseToken();
+  const tokenHash = hashResponseToken(token, env);
+  const publicBase = String(baseUrl || env.PUBLIC_APP_URL || env.URL || "").replace(/\/$/, "");
+  const publicUrl = publicBase ? `${publicBase}/respond/${token}` : `/respond/${token}`;
+  const next = appendRequestAudit({
+    ...record,
+    tokenHash,
+    updatedAt: nowIso()
+  }, "request_token_rotated", actor);
+  try {
+    await setJson(store("requests", env), `tokens/${tokenHash}`, { schemaVersion: SCHEMA_VERSION, requestId: id, createdAt: nowIso() }, { onlyIfNew: true });
+    const saved = await saveSubstitutionRequest(next, env);
+    return { ok: true, token, publicUrl, record: saved };
+  } catch (error) {
+    return { ok: false, code: "STORAGE_ERROR", error: "Substitution request token could not be created." };
+  }
 }
 
 async function saveSubstitutionRequest(record, env = process.env) {
@@ -492,13 +520,16 @@ function validateCustomerChoices(record, choices) {
 
 async function markSubstitutionRequestOpened(token, env = process.env) {
   const record = await getSubstitutionRequestByToken(token, env);
-  if (!record) return { ok: false, code: "REQUEST_NOT_FOUND", error: "This link is invalid or unavailable." };
+  if (!record) return { ok: false, status: 404, code: "REQUEST_UNAVAILABLE", error: "This request is not available." };
   const status = requestStatus(record);
   if (status === "awaiting_customer") {
     const opened = appendRequestAudit({ ...record, status: "opened", openedAt: record.openedAt || nowIso() }, "link_opened");
-    return { ok: true, record: await saveSubstitutionRequest(opened, env) };
+    const saved = await saveSubstitutionRequest(opened, env);
+    await createAuditRecord({ type: "link_opened", details: { requestId: saved.requestId, orderNumber: saved.orderNumber } }, env);
+    return { ok: true, record: saved };
   }
-  return { ok: true, record };
+  if (status === "opened" || status === "customer_responded") return { ok: true, record };
+  return { ok: false, status: 404, code: "REQUEST_UNAVAILABLE", error: "This request is not available." };
 }
 
 async function submitSubstitutionResponse(token, choices, env = process.env) {
@@ -508,20 +539,30 @@ async function submitSubstitutionResponse(token, choices, env = process.env) {
   if (status === "expired") return { ok: false, status: 410, code: "REQUEST_EXPIRED", error: "This request has expired." };
   if (status === "revoked") return { ok: false, status: 410, code: "REQUEST_REVOKED", error: "This request is no longer active." };
   if (status === "completed") return { ok: false, status: 409, code: "REQUEST_COMPLETED", error: "This request has already been completed by staff." };
-  if (record.submittedAt) return { ok: false, status: 409, code: "ALREADY_SUBMITTED", error: "Your choices were already submitted." };
+  if (record.submittedAt || status === "customer_responded") return { ok: true, alreadySubmitted: true, record };
+  if (!["awaiting_customer", "opened"].includes(status)) return { ok: false, status: 409, code: "REQUEST_UNAVAILABLE", error: "This request is not available." };
   const validation = validateCustomerChoices(record, choices);
   if (!validation.ok) return { ...validation, status: 400 };
   const nextItems = record.items.map((item) => ({
     ...item,
     customerChoice: validation.choices.find((choice) => choice.requestItemId === item.requestItemId) || null
   }));
+  const submissionVersion = Number(record.submissionVersion || 0) + 1;
   const submitted = appendRequestAudit({
     ...record,
     status: "customer_responded",
     submittedAt: nowIso(),
     submittedChoices: validation.choices,
+    submissionVersion,
     items: nextItems
   }, "customer_response_submitted");
+  try {
+    await setJson(store("requests", env), `submissions/${record.requestId}`, { schemaVersion: SCHEMA_VERSION, requestId: record.requestId, submissionVersion, createdAt: nowIso() }, { onlyIfNew: true });
+  } catch (error) {
+    const latest = await getSubstitutionRequest(record.requestId, env);
+    if (latest?.submittedAt) return { ok: true, alreadySubmitted: true, record: latest };
+    return { ok: false, status: 409, code: "REQUEST_UNAVAILABLE", error: "This request is not available." };
+  }
   const saved = await saveSubstitutionRequest(submitted, env);
   await createAuditRecord({ type: "customer_response_submitted", details: { requestId: saved.requestId, orderNumber: saved.orderNumber } }, env);
   return { ok: true, record: saved };
@@ -622,7 +663,7 @@ async function createAuditRecord(data, env = process.env) {
     type: String(data.type || "event").slice(0, 80),
     actor: scrubText(String(data.actor || data.staffIdentity || "system").slice(0, 120)),
     messageRecordId: data.messageRecordId || "",
-    details: data.details && typeof data.details === "object" ? scrubObject(data.details) : {},
+    details: data.details && typeof data.details === "object" ? redactObject(data.details) : {},
     createdAt: data.createdAt || nowIso()
   };
   await setJson(store("audit", env), `events/${record.createdAt}_${record.id}`, record);
@@ -701,6 +742,74 @@ async function updateMessageStatus(id, status, env = process.env) {
   const saved = await saveRecord(record, env);
   await createAuditRecord({ type: "message_status_updated", messageRecordId: id, details: { status: record.latestTwilioStatus } }, env);
   return saved;
+}
+
+async function findMessageRecordBySid(messageSid, env = process.env) {
+  const sid = String(messageSid || "").trim();
+  if (!/^SM[A-Za-z0-9]{6,64}$/.test(sid)) return null;
+  const records = await listRawByPrefix(store("history", env), "records/", 1000);
+  return records.find((record) => record.twilioMessageSid === sid) || null;
+}
+
+async function updateMessageStatusBySid(messageSid, status, env = process.env) {
+  const record = await findMessageRecordBySid(messageSid, env);
+  if (!record) return null;
+  return updateMessageStatus(record.id, status, env);
+}
+
+async function getProcessedTwilioMessage(messageSid, env = process.env) {
+  const sid = String(messageSid || "").trim();
+  if (!/^SM[A-Za-z0-9]{3,64}$/.test(sid)) return null;
+  const record = await getJsonSafe(store("history", env), `twilio-message-sids/${sid}`);
+  return record?.messageSid ? record : null;
+}
+
+async function recordProcessedTwilioMessage(data, env = process.env) {
+  const messageSid = String(data.messageSid || "").trim();
+  if (!/^SM[A-Za-z0-9]{3,64}$/.test(messageSid)) return { ok: false, code: "INVALID_MESSAGE_SID" };
+  const existing = await getProcessedTwilioMessage(messageSid, env);
+  if (existing) return { ok: true, duplicate: true, record: existing };
+  const record = {
+    schemaVersion: SCHEMA_VERSION,
+    messageSid,
+    fromRedacted: data.fromRedacted || "[redacted]",
+    toRedacted: data.toRedacted || "[redacted]",
+    receivedAt: data.receivedAt || nowIso(),
+    processingStatus: scrubCustomerText(data.processingStatus || "processed", 80),
+    type: scrubCustomerText(data.type || "twilio_webhook", 80),
+    associatedRecordId: scrubCustomerText(data.associatedRecordId || "", 120)
+  };
+  try {
+    await setJson(store("history", env), `twilio-message-sids/${messageSid}`, record, { onlyIfNew: true });
+    return { ok: true, duplicate: false, record };
+  } catch (error) {
+    if (error?.code !== "BLOB_ALREADY_EXISTS" && error?.status !== 412) throw error;
+    const saved = await getProcessedTwilioMessage(messageSid, env);
+    return { ok: true, duplicate: true, record: saved || record };
+  }
+}
+
+async function saveOptOutStatus({ phone, fromRedacted, toRedacted, messageSid, keyword, status = "opted_out" }, env = process.env) {
+  const phoneHash = hashPhoneNumber(phone, env);
+  const record = {
+    schemaVersion: SCHEMA_VERSION,
+    phoneHash,
+    fromRedacted: fromRedacted || "[redacted]",
+    toRedacted: toRedacted || "[redacted]",
+    messageSid: scrubCustomerText(messageSid || "", 80),
+    keyword: scrubCustomerText(keyword || "", 20),
+    status: scrubCustomerText(status, 40),
+    updatedAt: nowIso()
+  };
+  await setJson(store("history", env), `opt-outs/${phoneHash}`, record);
+  await createAuditRecord({ type: "twilio_opt_out", details: { status: record.status, fromRedacted: record.fromRedacted, keyword: record.keyword } }, env);
+  return record;
+}
+
+async function getOptOutStatus(phone, env = process.env) {
+  const phoneHash = hashPhoneNumber(phone, env);
+  const record = await getJsonSafe(store("history", env), `opt-outs/${phoneHash}`);
+  return record?.phoneHash ? record : null;
 }
 
 async function listRawByPrefix(targetStore, prefix, limit = 500) {
@@ -890,6 +999,42 @@ async function exportSafeBackup(env = process.env) {
   };
 }
 
+async function cleanupDataStoreRecords({ now = Date.now(), max = 100, env = process.env } = {}) {
+  const targetHistory = store("history", env);
+  const targetRequests = store("requests", env);
+  const webhookCutoff = now - 14 * 24 * 60 * 60 * 1000;
+  const requestCutoff = now - 30 * 24 * 60 * 60 * 1000;
+  let removedWebhookDedupe = 0;
+  let archivedExpiredRequests = 0;
+
+  const sidRecords = await targetHistory.list({ prefix: "twilio-message-sids/" }).catch(() => ({ blobs: [] }));
+  for (const blob of sidRecords.blobs || []) {
+    if (removedWebhookDedupe >= max) break;
+    const record = await getJsonSafe(targetHistory, blob.key);
+    const timestamp = new Date(record?.receivedAt || record?.createdAt || 0).getTime();
+    if (!record || timestamp < webhookCutoff) {
+      if (await deleteKey(targetHistory, blob.key)) removedWebhookDedupe += 1;
+    }
+  }
+
+  const requestRecords = await targetRequests.list({ prefix: "requests/" }).catch(() => ({ blobs: [] }));
+  for (const blob of requestRecords.blobs || []) {
+    if (archivedExpiredRequests >= max) break;
+    const record = await getJsonSafe(targetRequests, blob.key);
+    if (!record?.requestId || record.archivedAt) continue;
+    const terminalAt = record.completedAt || record.revokedAt || record.submittedAt || (requestStatus(record, now) === "expired" ? record.expiresAt : "");
+    if (terminalAt && new Date(terminalAt).getTime() < requestCutoff) {
+      await setJson(targetRequests, blob.key, appendRequestAudit({ ...record, archivedAt: nowIso(), status: requestStatus(record, now) }, "request_archived"));
+      archivedExpiredRequests += 1;
+    }
+  }
+
+  if (removedWebhookDedupe || archivedExpiredRequests) {
+    await createAuditRecord({ type: "cleanup_run", details: { removedWebhookDedupe, archivedExpiredRequests } }, env);
+  }
+  return { removedWebhookDedupe, archivedExpiredRequests };
+}
+
 async function backupPayload(env = process.env) {
   return exportSafeBackup(env);
 }
@@ -911,6 +1056,7 @@ module.exports = {
   clearMemoryHistory,
   createResponseToken,
   createAuditRecord,
+  cleanupDataStoreRecords,
   createMessageRecord,
   createSubstitutionRequest,
   createTemplate,
@@ -919,9 +1065,13 @@ module.exports = {
   exportSafeBackup,
   findByIdempotency,
   findDuplicate,
+  findMessageRecordBySid,
   getMessageRecord,
+  getOptOutStatus,
+  getProcessedTwilioMessage,
   getSubstitutionRequest,
   getSubstitutionRequestByToken,
+  hashPhoneNumber,
   hashResponseToken,
   idempotencyKey,
   initializeDataStores,
@@ -932,8 +1082,11 @@ module.exports = {
   messageStats,
   publicRecord,
   queryMessageRecords,
+  recordProcessedTwilioMessage,
   recordsToCsv,
   resetStoreFactory,
+  rotateSubstitutionRequestToken,
+  saveOptOutStatus,
   saveRecord,
   saveTemplate,
   safeRequestForCustomer,
@@ -943,6 +1096,7 @@ module.exports = {
   updateSubstitutionRequestSms,
   updateSubstitutionRequestStatus,
   updateMessageStatus,
+  updateMessageStatusBySid,
   updateTemplate,
   validateTemplate
 };

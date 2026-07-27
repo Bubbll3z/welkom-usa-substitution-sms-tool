@@ -6,10 +6,11 @@
     "test": "node --test",
     "dev": "node scripts/dev-server.js",
     "build": "node scripts/build-check.js",
-    "lint": "node --check netlify/functions/api.js && node --check src/auth.js && node --check src/data-store.js && node --check src/history.js && node --check src/shopify.js && node --check src/sms.js && node --check scripts/dev-server.js",
+    "lint": "node --check netlify/functions/api.js && node --check netlify/functions/auth-login.js && node --check netlify/functions/auth-logout.js && node --check netlify/functions/auth-me.js && node --check netlify/functions/auth-change-password.js && node --check netlify/functions/admin-create-user.js && node --check netlify/functions/admin-disable-user.js && node --check netlify/functions/admin-reset-user-password.js && node --check netlify/functions/admin-list-users.js && node --check src/auth.js && node --check src/auth-handlers.js && node --check src/endpoint-registry.js && node --check src/rate-limit.js && node --check src/safe-logger.js && node --check src/security.js && node --check src/validation.js && node --check src/data-store.js && node --check src/history.js && node --check src/shopify.js && node --check src/sms.js && node --check scripts/dev-server.js && node --check scripts/create-admin.js",
     "format": "node scripts/build-check.js",
     "typecheck": "node --check src/data-store.js",
-    "credential-scan": "node scripts/credential-scan.js"
+    "credential-scan": "node scripts/credential-scan.js",
+    "create-admin": "node scripts/create-admin.js"
   },
   "dependencies": {
     "@netlify/blobs": "^10.1.0",

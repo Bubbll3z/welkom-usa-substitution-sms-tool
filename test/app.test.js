@@ -5,33 +5,56 @@ const test = require("node:test");
 const twilio = require("twilio");
 
 process.env.NODE_ENV = "test";
-process.env.STAFF_PASSWORD = "test123";
 process.env.STAFF_NAME = "Test Staff";
-process.env.SESSION_SECRET = "12345678901234567890123456789012";
-process.env.SESSION_DURATION_MINUTES = "60";
 process.env.DRY_RUN = "true";
 process.env.SMS_DRY_RUN = "true";
 process.env.MESSAGE_STORAGE_PROVIDER = "memory";
 
 const { handler } = require("../netlify/functions/api");
-const { verifySession } = require("../src/auth");
-const { clearMemoryHistory } = require("../src/history");
+const { handler: authLoginHandler } = require("../netlify/functions/auth-login");
+const { handler: authLogoutHandler } = require("../netlify/functions/auth-logout");
+const { handler: authMeHandler } = require("../netlify/functions/auth-me");
+const { handler: adminCreateUserHandler } = require("../netlify/functions/admin-create-user");
+const { handler: adminListUsersHandler } = require("../netlify/functions/admin-list-users");
+const { handler: adminDisableUserHandler } = require("../netlify/functions/admin-disable-user");
+const {
+  clearAuthMemory,
+  createSession,
+  createUser,
+  getUserByUsername,
+  hashSessionId,
+  resetAuthStoreFactory,
+  saveUser,
+  verifySession
+} = require("../src/auth");
+const { clearMemoryHistory, getMessageRecord, saveRecord } = require("../src/history");
 const { resetStoreFactory, setStoreFactory } = require("../src/data-store");
+const { checkRateLimit, cleanupRateLimitRecords, clearRateLimitMemory } = require("../src/rate-limit");
+const { csrfTokenForSession } = require("../src/security");
 const { buildSubstitutionMessage, sendSms, smsLength, validateMessage } = require("../src/sms");
 const { consentFromAttributes, findOrder, getAccessToken, normalizeOrderQuery, searchProductsForSubstitutions } = require("../src/shopify");
 
+const csrfByCookie = new Map();
+
 function event(path, body, headers = {}, method = "POST") {
   const [pathOnly, rawQuery = ""] = path.split("?");
+  const nextHeaders = {
+    host: "localhost:3001",
+    "x-forwarded-proto": "http",
+    "content-type": "application/json",
+    ...headers
+  };
+  const cookie = nextHeaders.cookie || nextHeaders.Cookie;
+  const hasCsrfHeader = Object.prototype.hasOwnProperty.call(nextHeaders, "x-csrf-token") || Object.prototype.hasOwnProperty.call(nextHeaders, "X-CSRF-Token");
+  if (cookie && !hasCsrfHeader && ["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+    const token = csrfByCookie.get(cookie);
+    if (token) nextHeaders["x-csrf-token"] = token;
+  }
   return {
     httpMethod: method,
     path: pathOnly,
     rawQuery,
-    headers: {
-      host: "localhost:3001",
-      "x-forwarded-proto": "http",
-      "content-type": "application/json",
-      ...headers
-    },
+    headers: nextHeaders,
     body: body === undefined ? "" : JSON.stringify(body)
   };
 }
@@ -52,10 +75,28 @@ function formEvent(path, body, signature) {
   };
 }
 
-async function loginCookie(password = "test123") {
-  const response = await handler(event("/api/login", { password }));
+async function loginCookie(password = "test12345", username = "admin") {
+  const response = await handler(event("/api/login", { username, password }));
   assert.equal(response.statusCode, 200);
-  return response.headers["Set-Cookie"].split(";")[0];
+  const cookie = response.headers["Set-Cookie"].split(";")[0];
+  csrfByCookie.set(cookie, JSON.parse(response.body).csrfToken);
+  return cookie;
+}
+
+function rawEvent(path, body, headers = {}, method = "POST") {
+  const [pathOnly, rawQuery = ""] = path.split("?");
+  return {
+    httpMethod: method,
+    path: pathOnly,
+    rawQuery,
+    headers: {
+      host: "localhost:3001",
+      "x-forwarded-proto": "http",
+      "content-type": "application/json",
+      ...headers
+    },
+    body
+  };
 }
 
 function shopifyEnv() {
@@ -181,8 +222,11 @@ function mockFetch({ order = orderNode(), variant = variantNode(), missingOrder 
   };
 }
 
-test.beforeEach(() => {
+test.beforeEach(async () => {
   clearMemoryHistory();
+  clearAuthMemory();
+  clearRateLimitMemory();
+  csrfByCookie.clear();
   process.env.SHOPIFY_SHOP_DOMAIN = "welkom-usa.myshopify.com";
   process.env.SHOPIFY_ADMIN_ACCESS_TOKEN = "shpat_test";
   process.env.SHOPIFY_API_VERSION = "2025-10";
@@ -191,22 +235,29 @@ test.beforeEach(() => {
   delete process.env.BLOB_INIT_ENABLED;
   delete process.env.REQUIRE_LOGIN;
   resetStoreFactory();
+  resetAuthStoreFactory();
+  await createUser({ username: "admin", displayName: "Admin User", password: "test12345", role: "admin" });
+  await createUser({ username: "staff", displayName: "Staff User", password: "staffpass123", role: "staff" });
 });
 
 test("authentication supports login, session, logout, wrong password, and expired session", async () => {
-  const wrong = await handler(event("/api/login", { password: "wrong" }));
+  const wrong = await handler(event("/api/login", { username: "admin", password: "wrong" }));
   assert.equal(wrong.statusCode, 401);
+  assert.equal(JSON.parse(wrong.body).error, "Invalid username or password.");
 
   const cookie = await loginCookie();
   const token = cookie.split("=")[1];
-  assert.equal(verifySession(decodeURIComponent(token)).ok, true);
-  assert.equal(verifySession(decodeURIComponent(token), process.env, Date.now() + 90 * 60 * 1000).code, "AUTH_REQUIRED");
+  assert.equal((await verifySession(decodeURIComponent(token))).ok, true);
+  assert.equal((await verifySession(decodeURIComponent(token), process.env, Date.now() + 90 * 60 * 1000)).code, "AUTH_REQUIRED");
 
   const session = await handler(event("/api/session", undefined, { cookie }, "GET"));
   assert.equal(session.statusCode, 200);
+  assert.equal(JSON.parse(session.body).role, "admin");
 
   const logout = await handler(event("/api/logout", {}, { cookie }));
   assert.equal(logout.statusCode, 200);
+  const afterLogout = await handler(event("/api/session", undefined, { cookie }, "GET"));
+  assert.equal(afterLogout.statusCode, 401);
 });
 
 test("unauthenticated API request is rejected", async () => {
@@ -214,18 +265,245 @@ test("unauthenticated API request is rejected", async () => {
   assert.equal(response.statusCode, 401);
 });
 
-test("temporary no-login mode opens authenticated routes without a password", async () => {
+test("temporary no-login mode no longer bypasses server authentication", async () => {
   process.env.REQUIRE_LOGIN = "false";
 
   const session = await handler(event("/api/session", undefined, {}, "GET"));
-  assert.equal(session.statusCode, 200);
-  assert.equal(JSON.parse(session.body).authRequired, false);
+  assert.equal(session.statusCode, 401);
 
   const dashboard = await handler(event("/api/dashboard", undefined, {}, "GET"));
-  assert.equal(dashboard.statusCode, 200);
-  const dashboardBody = JSON.parse(dashboard.body);
-  assert.equal(dashboardBody.success, true);
-  assert.equal(dashboardBody.status.authRequired, false);
+  assert.equal(dashboard.statusCode, 401);
+});
+
+test("auth functions protect passwords, disabled users, lockout, roles and cookie flags", async () => {
+  const unknown = await authLoginHandler(event("/.netlify/functions/auth-login", { username: "missing", password: "whatever123" }));
+  assert.equal(unknown.statusCode, 401);
+  assert.equal(JSON.parse(unknown.body).error, "Invalid username or password.");
+
+  const adminLogin = await authLoginHandler(event("/.netlify/functions/auth-login", { username: "admin", password: "test12345" }, { "x-forwarded-proto": "https" }));
+  assert.equal(adminLogin.statusCode, 200);
+  assert.match(adminLogin.headers["Set-Cookie"], /HttpOnly/);
+  assert.match(adminLogin.headers["Set-Cookie"], /SameSite=Lax/);
+  assert.match(adminLogin.headers["Set-Cookie"], /Secure/);
+  assert.doesNotMatch(adminLogin.body, /passwordHash|passwordSalt|test12345/);
+  const adminCookie = adminLogin.headers["Set-Cookie"].split(";")[0];
+  csrfByCookie.set(adminCookie, JSON.parse(adminLogin.body).csrfToken);
+
+  const staffCookie = await loginCookie("staffpass123", "staff");
+  const rejected = await adminListUsersHandler(event("/.netlify/functions/admin-list-users", undefined, { cookie: staffCookie }, "GET"));
+  assert.equal(rejected.statusCode, 403);
+
+  const listed = await adminListUsersHandler(event("/.netlify/functions/admin-list-users", undefined, { cookie: adminCookie }, "GET"));
+  assert.equal(listed.statusCode, 200);
+  assert.doesNotMatch(listed.body, /passwordHash|passwordSalt|test12345|staffpass123/);
+
+  const created = await adminCreateUserHandler(event("/.netlify/functions/admin-create-user", {
+    username: "new.staff",
+    displayName: "New Staff",
+    password: "newpass123",
+    role: "staff"
+  }, { cookie: adminCookie }));
+  assert.equal(created.statusCode, 200);
+  assert.equal(JSON.parse(created.body).user.role, "staff");
+
+  const staffUser = await getUserByUsername("staff");
+  await saveUser({ ...staffUser, isActive: false });
+  const disabled = await authLoginHandler(event("/.netlify/functions/auth-login", { username: "staff", password: "staffpass123" }));
+  assert.equal(disabled.statusCode, 401);
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const response = await authLoginHandler(event("/.netlify/functions/auth-login", { username: "admin", password: "badpass123" }));
+    assert.equal(response.statusCode, 401);
+  }
+  const lockedUser = await getUserByUsername("admin");
+  assert.ok(lockedUser.lockedUntil);
+  const locked = await authLoginHandler(event("/.netlify/functions/auth-login", { username: "admin", password: "test12345" }));
+  assert.equal(locked.statusCode, 429);
+  assert.ok(locked.headers["Retry-After"]);
+});
+
+test("sessions store only hashes and enforce idle and absolute expiry", async () => {
+  const userResult = await createUser({ username: "timeout", displayName: "Timeout User", password: "timeout123", role: "staff" });
+  const base = Date.now();
+  const session = await createSession({ user: userResult.rawUser, event: event("/fake", {}, { "x-forwarded-proto": "https" }), now: base });
+  const cookie = session.cookie.split(";")[0];
+  const rawSessionId = cookie.split("=")[1];
+  assert.notEqual(session.session.sessionIdHash, rawSessionId);
+  assert.equal(session.session.sessionIdHash, hashSessionId(decodeURIComponent(rawSessionId)));
+
+  const active = await authMeHandler(event("/.netlify/functions/auth-me", undefined, { cookie }, "GET"));
+  assert.equal(active.statusCode, 200);
+
+  const idleExpired = await verifySession(decodeURIComponent(rawSessionId), process.env, base + 31 * 60 * 1000);
+  assert.equal(idleExpired.code, "AUTH_REQUIRED");
+
+  const absoluteSession = await createSession({ user: userResult.rawUser, event: event("/fake", {}, { "x-forwarded-proto": "https" }), now: base });
+  const absoluteCookie = absoluteSession.cookie.split(";")[0];
+  csrfByCookie.set(absoluteCookie, csrfTokenForSession(absoluteSession.session));
+  const absoluteToken = decodeURIComponent(absoluteCookie.split("=")[1]);
+  const absoluteExpired = await verifySession(absoluteToken, process.env, base + 8 * 60 * 60 * 1000 + 1);
+  assert.equal(absoluteExpired.code, "AUTH_REQUIRED");
+
+  const logout = await authLogoutHandler(event("/.netlify/functions/auth-logout", {}, { cookie: absoluteCookie }));
+  assert.equal(logout.statusCode, 200);
+  const afterLogout = await authMeHandler(event("/.netlify/functions/auth-me", undefined, { cookie: absoluteCookie }, "GET"));
+  assert.equal(afterLogout.statusCode, 401);
+});
+
+test("endpoint registry denies unknown routes, wrong methods, oversized bodies and dangerous fields", async () => {
+  const cookie = await loginCookie();
+  const unknown = await handler(event("/api/not-real", undefined, { cookie }, "GET"));
+  assert.equal(unknown.statusCode, 404);
+  assert.equal(JSON.parse(unknown.body).error, "Unable to process request");
+
+  const wrongMethod = await handler(event("/api/order-search", undefined, { cookie }, "GET"));
+  assert.equal(wrongMethod.statusCode, 405);
+  assert.equal(wrongMethod.headers.Allow, "POST");
+
+  const oversized = await handler(rawEvent("/api/order-search", JSON.stringify({ query: "#1023", pad: "x".repeat(17000) }), { cookie }));
+  assert.equal(oversized.statusCode, 413);
+
+  const dangerous = await handler(event("/api/order-search", { query: "#1023", role: "admin" }, { cookie }));
+  assert.equal(dangerous.statusCode, 400);
+  assert.equal(JSON.parse(dangerous.body).error, "Unable to process request");
+
+  const nestedDanger = await adminCreateUserHandler(event("/.netlify/functions/admin-create-user", {
+    username: "evil",
+    password: "password123",
+    role: "staff",
+    profile: { passwordHash: "inject" }
+  }, { cookie }));
+  assert.equal(nestedDanger.statusCode, 400);
+});
+
+test("security headers, CSP and frame protection are present", async () => {
+  const response = await handler(event("/api/session", undefined, {}, "GET"));
+  assert.equal(response.headers["X-Content-Type-Options"], "nosniff");
+  assert.equal(response.headers["Referrer-Policy"], "no-referrer");
+  assert.match(response.headers["Permissions-Policy"], /camera=\(\)/);
+  assert.match(response.headers["Permissions-Policy"], /microphone=\(\)/);
+  assert.match(response.headers["Permissions-Policy"], /geolocation=\(\)/);
+  assert.match(response.headers["Permissions-Policy"], /payment=\(\)/);
+  assert.equal(response.headers["X-Frame-Options"], "DENY");
+  assert.match(response.headers["Content-Security-Policy"], /default-src 'self'/);
+  assert.match(response.headers["Content-Security-Policy"], /frame-ancestors 'none'/);
+  assert.match(response.headers["Content-Security-Policy"], /object-src 'none'/);
+  assert.doesNotMatch(response.headers["Content-Security-Policy"], /unsafe-eval|script-src \*/);
+
+  const config = fs.readFileSync(path.join(__dirname, "../netlify.toml"), "utf8");
+  assert.match(config, /Content-Security-Policy/);
+  assert.match(config, /frame-ancestors 'none'/);
+  assert.match(config, /Referrer-Policy = "no-referrer"/);
+  assert.doesNotMatch(config, /unsafe-eval|script-src \*/);
+});
+
+test("CSRF and Origin protection reject unsafe staff requests and allow valid tokens", async () => {
+  const cookie = await loginCookie();
+  const missing = await handler(event("/api/order-search", { query: "#1023" }, { cookie, "x-csrf-token": "" }));
+  assert.equal(missing.statusCode, 403);
+  assert.equal(JSON.parse(missing.body).error, "Unable to process request");
+
+  const invalidToken = await handler(event("/api/order-search", { query: "#1023" }, { cookie, "x-csrf-token": "bad" }));
+  assert.equal(invalidToken.statusCode, 403);
+
+  const invalidOrigin = await handler(event("/api/order-search", { query: "#1023" }, { cookie, origin: "https://evil.example", "x-csrf-token": csrfByCookie.get(cookie) }));
+  assert.equal(invalidOrigin.statusCode, 403);
+
+  global.fetch = mockFetch();
+  try {
+    const valid = await handler(event("/api/order-search", { query: "#1023" }, { cookie, origin: "http://localhost:3001" }));
+    assert.equal(valid.statusCode, 200);
+  } finally {
+    global.fetch = undefined;
+  }
+});
+
+test("CORS never uses wildcard on protected APIs", async () => {
+  const cookie = await loginCookie();
+  const allowed = await handler(event("/api/message-history", undefined, { cookie, origin: "http://localhost:3001" }, "GET"));
+  assert.equal(allowed.statusCode, 200);
+  assert.equal(allowed.headers["Access-Control-Allow-Origin"], "http://localhost:3001");
+  assert.notEqual(allowed.headers["Access-Control-Allow-Origin"], "*");
+
+  const denied = await handler(event("/api/message-history", undefined, { cookie, origin: "https://evil.example" }, "GET"));
+  assert.notEqual(denied.headers["Access-Control-Allow-Origin"], "*");
+  assert.equal(denied.headers["Access-Control-Allow-Origin"], undefined);
+});
+
+test("invalid sessions, staff/admin boundaries and modified resource IDs are denied safely", async () => {
+  const invalid = await handler(event("/api/message-history", undefined, { cookie: "welkom_sms_session=bad" }, "GET"));
+  assert.equal(invalid.statusCode, 401);
+  assert.equal(JSON.parse(invalid.body).error, "Unable to process request");
+
+  const staffCookie = await loginCookie("staffpass123", "staff");
+  const staffAdmin = await adminDisableUserHandler(event("/.netlify/functions/admin-disable-user", { userId: "anything" }, { cookie: staffCookie }));
+  assert.equal(staffAdmin.statusCode, 403);
+
+  const adminCookie = await loginCookie();
+  const tamperedMessage = await handler(event("/api/message-history/../../secret", undefined, { cookie: adminCookie }, "GET"));
+  assert.equal(tamperedMessage.statusCode, 404);
+  assert.doesNotMatch(tamperedMessage.body, /Blob|by-id|by-username|C:\\|\.js|stack/i);
+
+  const tamperedRequest = await handler(event("/api/substitution-requests/bad id", undefined, { cookie: adminCookie }, "GET"));
+  assert.equal(tamperedRequest.statusCode, 404);
+  assert.equal(JSON.parse(tamperedRequest.body).error, "Unable to process request");
+});
+
+test("unexpected browser roles are ignored by admin user creation", async () => {
+  const adminCookie = await loginCookie();
+  const created = await adminCreateUserHandler(event("/.netlify/functions/admin-create-user", {
+    username: "rolecheck",
+    displayName: "Role Check",
+    password: "rolecheck123",
+    role: "staff",
+    isAdmin: true
+  }, { cookie: adminCookie }));
+  assert.equal(created.statusCode, 400);
+
+  const allowed = await adminCreateUserHandler(event("/.netlify/functions/admin-create-user", {
+    username: "rolecheck2",
+    displayName: "Role Check",
+    password: "rolecheck123",
+    role: "staff"
+  }, { cookie: adminCookie }));
+  assert.equal(allowed.statusCode, 200);
+  assert.equal(JSON.parse(allowed.body).user.role, "staff");
+});
+
+test("login and IP throttling return Retry-After without revealing keys", async () => {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const response = await authLoginHandler(event("/.netlify/functions/auth-login", { username: "admin", password: "badpass123" }, { "x-forwarded-for": "203.0.113.10" }));
+    assert.equal(response.statusCode, 401);
+  }
+  const usernameLimited = await authLoginHandler(event("/.netlify/functions/auth-login", { username: "admin", password: "badpass123" }, { "x-forwarded-for": "203.0.113.10" }));
+  assert.equal(usernameLimited.statusCode, 429);
+  assert.ok(usernameLimited.headers["Retry-After"]);
+  assert.doesNotMatch(usernameLimited.body, /login-failed-username|203\.0\.113\.10|admin/i);
+
+  clearRateLimitMemory();
+  clearAuthMemory();
+  await createUser({ username: "admin", displayName: "Admin User", password: "test12345", role: "admin" });
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const response = await authLoginHandler(event("/.netlify/functions/auth-login", { username: `missing${attempt}`, password: "badpass123" }, { "x-forwarded-for": "203.0.113.20" }));
+    assert.equal(response.statusCode, 401);
+  }
+  const ipLimited = await authLoginHandler(event("/.netlify/functions/auth-login", { username: "anothermissing", password: "badpass123" }, { "x-forwarded-for": "203.0.113.20" }));
+  assert.equal(ipLimited.statusCode, 429);
+  assert.ok(ipLimited.headers["Retry-After"]);
+});
+
+test("rate limit records reset after expiry and cleanup removes old records", async () => {
+  const first = await checkRateLimit({ key: "unit-expiry", limit: 1, windowSeconds: 10, blockSeconds: 10, now: 1000, cleanup: false });
+  assert.equal(first.ok, true);
+  const blocked = await checkRateLimit({ key: "unit-expiry", limit: 1, windowSeconds: 10, blockSeconds: 10, now: 2000, cleanup: false });
+  assert.equal(blocked.ok, false);
+  assert.ok(blocked.retryAfter > 0);
+  const reset = await checkRateLimit({ key: "unit-expiry", limit: 1, windowSeconds: 10, blockSeconds: 10, now: 12000, cleanup: false });
+  assert.equal(reset.ok, true);
+
+  await checkRateLimit({ key: "unit-cleanup", limit: 1, windowSeconds: 1, blockSeconds: 1, now: 1000, cleanup: false });
+  const cleanup = await cleanupRateLimitRecords({ olderThan: 100000, max: 10 });
+  assert.ok(cleanup.removed >= 1);
 });
 
 test("builds and validates the approved substitution message", () => {
@@ -282,6 +560,12 @@ test("Shopify consent mapping and exact order search", async () => {
   assert.equal(exact.body.order.name, "#1023");
   assert.equal(exact.body.order.smsConsent.granted, true);
   assert.equal(exact.body.order.customer.redactedPhone, "+15*******67");
+  assert.equal(exact.body.order.customer.phone, "");
+  assert.equal(exact.body.order.customer.email, "");
+  assert.match(exact.body.order.customer.maskedEmail, /^sa\*+@example\.com$/);
+  assert.equal(exact.body.order.shippingAddress.address1, "");
+  assert.equal(exact.body.order.shippingAddressDisplay, "Hidden for customer privacy");
+  assert.doesNotMatch(JSON.stringify(exact.body.order), /15551234567|sarah@example\.com|123 Main St|Orlando|32801/);
   assert.equal(exact.body.order.totalPrice, "USD 47.98");
 
   const partial = await findOrder("#1023", { env: shopifyEnv(), fetchImpl: mockFetch({ order: orderNode({ name: "#10230" }) }) });
@@ -373,6 +657,7 @@ test("send revalidates order consent, line item, substitute inventory, duplicate
     lineItemId: "gid://shopify/LineItem/1",
     substituteVariantId: "gid://shopify/ProductVariant/new",
     message: "Welkom USA: Hi Sarah, Cadbury Crunchie Chocolate Bar 44g in order #1023 is unavailable. We can substitute it with Cadbury Flake Chocolate Bar 32g. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.",
+    sendConfirmed: true,
     idempotencyKey: "idem-1"
   };
   try {
@@ -402,6 +687,7 @@ test("send supports a validated custom substitute title when Shopify search has 
       lineItemId: "gid://shopify/LineItem/1",
       customSubstituteTitle: "Iwisa Maize Meal 2.5kg",
       message: "Welkom USA: Hi Sarah, Cadbury Crunchie Chocolate Bar 44g in order #1023 is unavailable. We can substitute it with Iwisa Maize Meal 2.5kg. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.",
+      sendConfirmed: true,
       idempotencyKey: "custom-substitute"
     }, { cookie }));
     assert.equal(response.statusCode, 200);
@@ -424,6 +710,7 @@ test("manual SMS requires consent confirmation, redacts phone, and stays in dry-
     substituteItem: "Replacement biscuits",
     reference: "physical-shop",
     consentConfirmed: true,
+    sendConfirmed: true,
     message: "Welkom USA: Hi Walk In, Requested biscuits in order #physical-shop is unavailable. We can substitute it with Replacement biscuits. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.",
     idempotencyKey: "manual-dry-run"
   };
@@ -450,6 +737,77 @@ test("manual SMS requires consent confirmation, redacts phone, and stays in dry-
   assert.equal(JSON.parse(repeat.body).idempotent, true);
 });
 
+test("Shopify API access is explicit and rejects proxy-style requests", async () => {
+  const blockedGraphql = await handler(event("/api/shopify/graphql", { query: "{ shop { name } }" }, {}, "POST"));
+  assert.equal(blockedGraphql.statusCode, 404);
+
+  const cookie = await loginCookie();
+  const arbitraryGraphql = await handler(event("/api/order-search", { query: "#1023", graphql: "{ customers { nodes { id } } }" }, { cookie }));
+  assert.equal(arbitraryGraphql.statusCode, 400);
+
+  const arbitraryRest = await handler(event("/api/product-search", { path: "/admin/api/2025-10/orders.json", query: "flake" }, { cookie }));
+  assert.equal(arbitraryRest.statusCode, 400);
+
+  const directRest = await handler(event("/api/shopify/rest/admin/api/2025-10/orders.json", {}, { cookie }));
+  assert.equal(directRest.statusCode, 404);
+});
+
+test("staff SMS actions are throttled per staff user", async () => {
+  const cookie = await loginCookie();
+  for (let index = 0; index < 10; index += 1) {
+    const response = await handler(event("/api/send-manual-sms", {
+      phone: `+15551234${String(index).padStart(2, "0")}`,
+      message: `Welkom USA: Manual rate limit dry-run message ${index}. Reply STOP to opt out.`,
+      consentConfirmed: true,
+      sendConfirmed: true,
+      idempotencyKey: `manual-rate-${index}`
+    }, { cookie }));
+    assert.equal(response.statusCode, 200);
+  }
+  const limited = await handler(event("/api/send-manual-sms", {
+    phone: "+1555123499",
+    message: "Welkom USA: Manual rate limit dry-run message final. Reply STOP to opt out.",
+    consentConfirmed: true,
+    sendConfirmed: true,
+    idempotencyKey: "manual-rate-final"
+  }, { cookie }));
+  assert.equal(limited.statusCode, 429);
+  assert.ok(limited.headers["Retry-After"]);
+});
+
+test("substitution SMS sends are throttled per order", async () => {
+  const cookie = await loginCookie();
+  const originalFetch = global.fetch;
+  global.fetch = mockFetch();
+  try {
+    for (let index = 0; index < 3; index += 1) {
+      const response = await handler(event("/api/send-substitution-sms", {
+        orderId: "gid://shopify/Order/1",
+        lineItemId: "gid://shopify/LineItem/1",
+        customSubstituteTitle: "Cadbury Flake Chocolate Bar 32g",
+        message: `Welkom USA: Hi Sarah, Cadbury Crunchie Chocolate Bar 44g in order #1023 is unavailable. We can substitute it with Cadbury Flake Chocolate Bar 32g. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out. ${index}`,
+        sendConfirmed: true,
+        authorizedResend: true,
+        idempotencyKey: `order-rate-${index}`
+      }, { cookie }));
+      assert.equal(response.statusCode, 200);
+    }
+    const limited = await handler(event("/api/send-substitution-sms", {
+      orderId: "gid://shopify/Order/1",
+      lineItemId: "gid://shopify/LineItem/1",
+      customSubstituteTitle: "Cadbury Flake Chocolate Bar 32g",
+      message: "Welkom USA: Hi Sarah, Cadbury Crunchie Chocolate Bar 44g in order #1023 is unavailable. We can substitute it with Cadbury Flake Chocolate Bar 32g. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out. final",
+      sendConfirmed: true,
+      authorizedResend: true,
+      idempotencyKey: "order-rate-final"
+    }, { cookie }));
+    assert.equal(limited.statusCode, 429);
+    assert.ok(limited.headers["Retry-After"]);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("send blocks missing consent, cancelled order, invalid line item, and unavailable substitute", async () => {
   const cookie = await loginCookie();
   const originalFetch = global.fetch;
@@ -457,6 +815,7 @@ test("send blocks missing consent, cancelled order, invalid line item, and unava
     orderId: "gid://shopify/Order/1",
     lineItemId: "gid://shopify/LineItem/1",
     substituteVariantId: "gid://shopify/ProductVariant/new",
+    sendConfirmed: true,
     message: "Welkom USA: Hi Sarah, Cadbury Crunchie Chocolate Bar 44g in order #1023 is unavailable. We can substitute it with Cadbury Flake Chocolate Bar 32g. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out."
   };
 
@@ -469,7 +828,7 @@ test("send blocks missing consent, cancelled order, invalid line item, and unava
   assert.equal(JSON.parse(cancelled.body).code, "ORDER_CANCELLED");
 
   global.fetch = mockFetch();
-  const badLine = await handler(event("/api/send-substitution-sms", { ...payload, lineItemId: "bad" }, { cookie }));
+  const badLine = await handler(event("/api/send-substitution-sms", { ...payload, lineItemId: "gid://shopify/LineItem/999" }, { cookie }));
   assert.equal(JSON.parse(badLine.body).code, "LINE_ITEM_INVALID");
 
   global.fetch = mockFetch({ variant: variantNode({ availableForSale: false }) });
@@ -488,6 +847,7 @@ test("history endpoint lists stored message records without secrets", async () =
       lineItemId: "gid://shopify/LineItem/1",
       substituteVariantId: "gid://shopify/ProductVariant/new",
       message: "Welkom USA: Hi Sarah, Cadbury Crunchie Chocolate Bar 44g in order #1023 is unavailable. We can substitute it with Cadbury Flake Chocolate Bar 32g. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.",
+      sendConfirmed: true,
       idempotencyKey: "history"
     }, { cookie }));
     const history = await handler(event("/api/message-history", undefined, { cookie }, "GET"));
@@ -519,6 +879,7 @@ test("secure substitution request API creates link, redacts public data, and acc
         quantity: 1,
         substituteVariantIds: ["gid://shopify/ProductVariant/new"]
       }],
+      sendConfirmed: true,
       idempotencyKey: "secure-request-api"
     }, { cookie }));
     assert.equal(created.statusCode, 200);
@@ -533,15 +894,32 @@ test("secure substitution request API creates link, redacts public data, and acc
     const publicBody = JSON.parse(publicRead.body);
     assert.equal(publicBody.success, true);
     assert.equal(publicBody.request.items.length, 1);
-    assert.doesNotMatch(publicRead.body, /15551234567|shpat_test|tokenHash|gid:\/\/shopify/);
+    assert.doesNotMatch(publicRead.body, /15551234567|sarah@example|Main St|shpat_test|tokenHash|gid:\/\/shopify|customerPhone|customerFirstName|staffNote|createdBy/);
 
     const item = publicBody.request.items[0];
+    const guessed = await handler(event("/api/public/substitution-request?token=abcdefghijklmnopqrstuvwxyz1234567890ABCDEFZ", undefined, {}, "GET"));
+    assert.equal(guessed.statusCode, 404);
+    assert.equal(JSON.parse(guessed.body).error, "This request is not available.");
+
     const invalid = await handler(event("/api/public/substitution-response", {
       token,
       choices: [{ requestItemId: item.requestItemId, type: "substitute", optionId: "unapproved" }]
     }));
     assert.equal(invalid.statusCode, 400);
     assert.equal(JSON.parse(invalid.body).code, "INVALID_RESPONSE");
+
+    const priceTamper = await handler(event("/api/public/substitution-response", {
+      token,
+      choices: [{ requestItemId: item.requestItemId, type: "substitute", optionId: item.substituteOptions[0].optionId, price: "USD 0.01" }]
+    }));
+    assert.equal(priceTamper.statusCode, 400);
+
+    const orderTamper = await handler(event("/api/public/substitution-response", {
+      token,
+      orderId: "gid://shopify/Order/evil",
+      choices: [{ requestItemId: item.requestItemId, type: "substitute", optionId: item.substituteOptions[0].optionId }]
+    }));
+    assert.equal(orderTamper.statusCode, 400);
 
     const submitted = await handler(event("/api/public/substitution-response", {
       token,
@@ -554,12 +932,51 @@ test("secure substitution request API creates link, redacts public data, and acc
       token,
       choices: [{ requestItemId: item.requestItemId, type: "refund" }]
     }));
-    assert.equal(repeat.statusCode, 409);
-    assert.equal(JSON.parse(repeat.body).code, "ALREADY_SUBMITTED");
+    assert.equal(repeat.statusCode, 200);
+    assert.equal(JSON.parse(repeat.body).alreadySubmitted, true);
+    assert.equal(JSON.parse(repeat.body).request.submittedChoices[0].type, "substitute");
 
     const list = await handler(event("/api/substitution-requests", undefined, { cookie }, "GET"));
     assert.equal(list.statusCode, 200);
     assert.equal(JSON.parse(list.body).requests.length, 1);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("customer submission attempts are throttled by IP and token", async () => {
+  const cookie = await loginCookie();
+  const originalFetch = global.fetch;
+  global.fetch = mockFetch();
+  try {
+    const created = await handler(event("/api/substitution-requests", {
+      orderId: "gid://shopify/Order/1",
+      expiryHours: 48,
+      items: [{
+        lineItemId: "gid://shopify/LineItem/1",
+        quantity: 1,
+        substituteVariantIds: ["gid://shopify/ProductVariant/new"]
+      }],
+      sendConfirmed: true,
+      idempotencyKey: "customer-submit-rate"
+    }, { cookie }));
+    assert.equal(created.statusCode, 200);
+    const token = JSON.parse(created.body).publicUrl.split("/respond/")[1];
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const response = await handler(event("/api/public/substitution-response", {
+        token,
+        choices: [{ requestItemId: "bad-item", type: "refund" }]
+      }, { "x-forwarded-for": "198.51.100.77" }));
+      assert.equal(response.statusCode, 400);
+    }
+    const limited = await handler(event("/api/public/substitution-response", {
+      token,
+      choices: [{ requestItemId: "bad-item", type: "refund" }]
+    }, { "x-forwarded-for": "198.51.100.77" }));
+    assert.equal(limited.statusCode, 429);
+    assert.ok(limited.headers["Retry-After"]);
+    assert.doesNotMatch(limited.body, new RegExp(token));
   } finally {
     global.fetch = originalFetch;
   }
@@ -571,6 +988,11 @@ test("public customer response page markup is present", () => {
   assert.match(html, /Choose what you would prefer/);
   assert.match(html, /Confirm My Choices/);
   assert.match(html, /choice-card/);
+});
+
+test("frontend build does not expose Shopify Admin secrets or direct Admin API calls", () => {
+  const html = fs.readFileSync(path.join(__dirname, "../public/index.html"), "utf8");
+  assert.doesNotMatch(html, /shpat_|SHOPIFY_ADMIN_ACCESS_TOKEN|SHOPIFY_CLIENT_SECRET|X-Shopify-Access-Token|\/admin\/api\/|graphql\.json|VITE_.*SHOPIFY/i);
 });
 
 test("config diagnostics reports safe check names without secret values", async () => {
@@ -598,6 +1020,7 @@ test("dashboard, backup and filtered history endpoints are protected and do not 
       lineItemId: "gid://shopify/LineItem/1",
       substituteVariantId: "gid://shopify/ProductVariant/new",
       message: "Welkom USA: Hi Sarah, Cadbury Crunchie Chocolate Bar 44g in order #1023 is unavailable. We can substitute it with Cadbury Flake Chocolate Bar 32g. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.",
+      sendConfirmed: true,
       idempotencyKey: "dashboard-history"
     }, { cookie }));
 
@@ -623,6 +1046,14 @@ test("dashboard, backup and filtered history endpoints are protected and do not 
     assert.equal(csvBackup.statusCode, 200);
     assert.match(csvBackup.body, /orderName/);
     assert.doesNotMatch(csvBackup.body, /15551234567/);
+
+    const staffCookie = await loginCookie("staffpass123", "staff");
+    const staffBackup = await handler(event("/api/backup.json", undefined, { cookie: staffCookie }, "GET"));
+    assert.equal(staffBackup.statusCode, 403);
+
+    const cleanup = await handler(event("/api/admin/cleanup", {}, { cookie }, "POST"));
+    assert.equal(cleanup.statusCode, 200);
+    assert.equal(JSON.parse(cleanup.body).success, true);
   } finally {
     global.fetch = originalFetch;
   }
@@ -841,15 +1272,154 @@ test("Twilio status callback validates signatures", async () => {
     lineItemId: "gid://shopify/LineItem/1",
     substituteVariantId: "gid://shopify/ProductVariant/new",
     message: "Welkom USA: Hi Sarah, Cadbury Crunchie Chocolate Bar 44g in order #1023 is unavailable. We can substitute it with Cadbury Flake Chocolate Bar 32g. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.",
+    sendConfirmed: true,
     idempotencyKey: "callback"
   }, { cookie }));
   global.fetch = originalFetch;
-  const recordId = JSON.parse(send.body).record.id;
+  const sentRecord = JSON.parse(send.body).record;
+  const recordId = sentRecord.id;
+  await saveRecord({ ...sentRecord, twilioMessageSid: "SM123456789" });
   const url = `https://example.netlify.app/api/twilio-status?recordId=${encodeURIComponent(recordId)}`;
-  const params = { MessageSid: "SM123", MessageStatus: "delivered" };
+  const params = { MessageSid: "SM123456789", MessageStatus: "delivered" };
   const signature = twilio.getExpectedTwilioSignature(process.env.TWILIO_AUTH_TOKEN, url, params);
   const bad = await handler(formEvent(`/api/twilio-status?recordId=${recordId}`, params, "bad"));
   assert.equal(bad.statusCode, 403);
+  const missing = await handler(formEvent(`/api/twilio-status?recordId=${recordId}`, params, ""));
+  assert.equal(missing.statusCode, 403);
   const good = await handler(formEvent(`/api/twilio-status?recordId=${recordId}`, params, signature));
   assert.equal(good.statusCode, 200);
+  assert.equal((await getMessageRecord(recordId)).latestTwilioStatus, "delivered");
+  const duplicate = await handler(formEvent(`/api/twilio-status?recordId=${recordId}`, params, signature));
+  assert.equal(duplicate.statusCode, 200);
+  assert.equal(JSON.parse(duplicate.body).duplicate, true);
+
+  const invalidStatusParams = { MessageSid: "SM999", MessageStatus: "made_up" };
+  const invalidStatusSignature = twilio.getExpectedTwilioSignature(process.env.TWILIO_AUTH_TOKEN, url, invalidStatusParams);
+  const invalidStatus = await handler(formEvent(`/api/twilio-status?recordId=${recordId}`, invalidStatusParams, invalidStatusSignature));
+  assert.equal(invalidStatus.statusCode, 400);
+});
+
+test("Twilio inbound STOP and HELP are signature-validated and safe", async () => {
+  process.env.TWILIO_AUTH_TOKEN = "secret";
+  const stopParams = { MessageSid: "SMSTOP123", From: "+15551234567", To: "+15550000000", Body: "STOP" };
+  const stopUrl = "https://example.netlify.app/api/twilio-inbound";
+  const stopSignature = twilio.getExpectedTwilioSignature(process.env.TWILIO_AUTH_TOKEN, stopUrl, stopParams);
+  const invalid = await handler(formEvent("/api/twilio-inbound", stopParams, "bad"));
+  assert.equal(invalid.statusCode, 403);
+
+  const stop = await handler(formEvent("/api/twilio-inbound", stopParams, stopSignature));
+  assert.equal(stop.statusCode, 200);
+  assert.match(stop.body, /opted out/i);
+  assert.doesNotMatch(stop.body, /15551234567|secret/);
+
+  const duplicate = await handler(formEvent("/api/twilio-inbound", stopParams, stopSignature));
+  assert.equal(duplicate.statusCode, 200);
+
+  const cookie = await loginCookie();
+  const originalFetch = global.fetch;
+  global.fetch = mockFetch();
+  try {
+    const blocked = await handler(event("/api/send-substitution-sms", {
+      orderId: "gid://shopify/Order/1",
+      lineItemId: "gid://shopify/LineItem/1",
+      substituteVariantId: "gid://shopify/ProductVariant/new",
+      message: "Welkom USA: Hi Sarah, Cadbury Crunchie Chocolate Bar 44g in order #1023 is unavailable. We can substitute it with Cadbury Flake Chocolate Bar 32g. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.",
+      sendConfirmed: true,
+      idempotencyKey: "optout-block"
+    }, { cookie }));
+    assert.equal(blocked.statusCode, 400);
+    assert.equal(JSON.parse(blocked.body).code, "RECIPIENT_OPTED_OUT");
+  } finally {
+    global.fetch = originalFetch;
+  }
+
+  clearMemoryHistory();
+  const helpParams = { MessageSid: "SMHELP123", From: "+15557654321", To: "+15550000000", Body: "HELP" };
+  const helpSignature = twilio.getExpectedTwilioSignature(process.env.TWILIO_AUTH_TOKEN, stopUrl, helpParams);
+  const help = await handler(formEvent("/api/twilio-inbound", helpParams, helpSignature));
+  assert.equal(help.statusCode, 200);
+  assert.match(help.body, /support/i);
+  assert.match(help.body, /STOP/i);
+});
+
+test("manual arbitrary destination SMS is admin-only and requires confirmation", async () => {
+  const staffCookie = await loginCookie("staffpass123", "staff");
+  const staff = await handler(event("/api/send-manual-sms", {
+    phone: "+15551234567",
+    consentConfirmed: true,
+    sendConfirmed: true,
+    message: "Welkom USA: Manual staff rejection test. Reply STOP to opt out."
+  }, { cookie: staffCookie }));
+  assert.equal(staff.statusCode, 403);
+
+  const adminCookie = await loginCookie();
+  const unconfirmed = await handler(event("/api/send-manual-sms", {
+    phone: "+15551234567",
+    consentConfirmed: true,
+    message: "Welkom USA: Manual confirmation test. Reply STOP to opt out."
+  }, { cookie: adminCookie }));
+  assert.equal(unconfirmed.statusCode, 400);
+  assert.equal(JSON.parse(unconfirmed.body).code, "INVALID_REQUEST");
+});
+
+test("Shopify webhook validates HMAC and deduplicates delivery IDs", async () => {
+  process.env.SHOPIFY_WEBHOOK_SECRET = "shopify-webhook-secret";
+  const body = JSON.stringify({ id: 1, topic: "orders/updated" });
+  const signature = require("node:crypto").createHmac("sha256", process.env.SHOPIFY_WEBHOOK_SECRET).update(body, "utf8").digest("base64");
+  const valid = await handler(rawEvent("/api/shopify-webhook", body, {
+    "content-type": "application/json",
+    "x-shopify-hmac-sha256": signature,
+    "x-shopify-shop-domain": "welkom-usa.myshopify.com",
+    "x-shopify-topic": "orders/updated",
+    "x-shopify-webhook-id": "webhook-delivery-1"
+  }));
+  assert.equal(valid.statusCode, 200);
+
+  const duplicate = await handler(rawEvent("/api/shopify-webhook", body, {
+    "content-type": "application/json",
+    "x-shopify-hmac-sha256": signature,
+    "x-shopify-shop-domain": "welkom-usa.myshopify.com",
+    "x-shopify-topic": "orders/updated",
+    "x-shopify-webhook-id": "webhook-delivery-1"
+  }));
+  assert.equal(duplicate.statusCode, 200);
+  assert.equal(JSON.parse(duplicate.body).duplicate, true);
+
+  const invalid = await handler(rawEvent("/api/shopify-webhook", body, {
+    "content-type": "application/json",
+    "x-shopify-hmac-sha256": "bad",
+    "x-shopify-shop-domain": "welkom-usa.myshopify.com",
+    "x-shopify-topic": "orders/updated",
+    "x-shopify-webhook-id": "webhook-delivery-2"
+  }));
+  assert.equal(invalid.statusCode, 403);
+  assert.doesNotMatch(invalid.body, /shopify-webhook-secret/);
+
+  const wrongShop = await handler(rawEvent("/api/shopify-webhook", body, {
+    "content-type": "application/json",
+    "x-shopify-hmac-sha256": signature,
+    "x-shopify-shop-domain": "evil.myshopify.com",
+    "x-shopify-topic": "orders/updated",
+    "x-shopify-webhook-id": "webhook-delivery-3"
+  }));
+  assert.equal(wrongShop.statusCode, 403);
+
+  const badTopic = await handler(rawEvent("/api/shopify-webhook", body, {
+    "content-type": "application/json",
+    "x-shopify-hmac-sha256": signature,
+    "x-shopify-shop-domain": "welkom-usa.myshopify.com",
+    "x-shopify-topic": "customers/create",
+    "x-shopify-webhook-id": "webhook-delivery-4"
+  }));
+  assert.equal(badTopic.statusCode, 400);
+
+  const wrongMethod = await handler(rawEvent("/api/shopify-webhook", body, {
+    "content-type": "application/json",
+    "x-shopify-hmac-sha256": signature,
+    "x-shopify-shop-domain": "welkom-usa.myshopify.com",
+    "x-shopify-topic": "orders/updated",
+    "x-shopify-webhook-id": "webhook-delivery-5"
+  }, "GET"));
+  assert.equal(wrongMethod.statusCode, 405);
+  delete process.env.SHOPIFY_WEBHOOK_SECRET;
 });

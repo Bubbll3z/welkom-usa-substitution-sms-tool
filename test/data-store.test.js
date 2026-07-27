@@ -5,6 +5,7 @@ process.env.NODE_ENV = "test";
 process.env.MESSAGE_STORAGE_PROVIDER = "netlify-blobs";
 
 const dataStore = require("../src/data-store");
+const { maskEmail, maskPhone, redactObject } = require("../src/safe-logger");
 
 function makeMockStores({ failWrites = false, failStore = "", failKeyPattern = null } = {}) {
   const maps = new Map();
@@ -34,6 +35,9 @@ function makeMockStores({ failWrites = false, failStore = "", failKeyPattern = n
       },
       async setJSON(key, value, options = {}) {
         await this.set(key, JSON.stringify(value), options);
+      },
+      async delete(key) {
+        map.delete(key);
       },
       async list(options = {}) {
         const prefix = options.prefix || "";
@@ -213,6 +217,83 @@ test("redaction validation and backup prevent secret leakage", async () => {
   assert.doesNotMatch(body, /shpat_test|TWILIO_AUTH_TOKEN|authorization:|Bearer /i);
 });
 
+test("safe logger redacts secrets and masks customer contact data", () => {
+  const redacted = redactObject({
+    password: "super-secret",
+    accessToken: "shpat_should_not_log",
+    authorization: "Bearer abc123",
+    nested: {
+      twilioAuthToken: "twilio-secret",
+      note: "Call +15551234567 or email sarah@example.com"
+    }
+  });
+  const body = JSON.stringify(redacted);
+  assert.doesNotMatch(body, /super-secret|shpat_should_not_log|Bearer abc123|twilio-secret|sarah@example.com|\+15551234567/);
+  assert.match(body, /\[redacted\]/);
+  assert.equal(maskPhone("+15551234567"), "+15*******67");
+  assert.equal(maskEmail("sarah@example.com"), "sa***@ex***.com");
+});
+
+test("Blob keys do not expose phone numbers, emails, raw tokens or plain order numbers", async () => {
+  const { maps } = makeMockStores();
+  await dataStore.createMessageRecord(baseRecord({ idempotencyKey: "key-safety", orderName: "#1023" }));
+  const created = await dataStore.createSubstitutionRequest(baseSubstitutionRequest({
+    token: "abcdefghijklmnopqrstuvwxyz1234567890ABCDEFG"
+  }));
+  await dataStore.saveOptOutStatus({
+    phone: "+15551234567",
+    fromRedacted: "+15*******67",
+    toRedacted: "+18*******00",
+    messageSid: "SMabc123",
+    keyword: "STOP"
+  });
+
+  const keys = Array.from(maps.values()).flatMap((map) => Array.from(map.keys())).join("\n");
+  assert.equal(created.ok, true);
+  assert.doesNotMatch(keys, /\+15551234567|sarah@example.com|abcdefghijklmnopqrstuvwxyz1234567890ABCDEFG|#1023/);
+  assert.match(keys, /records\/msg_|requests\/req_|tokens\/[a-f0-9]{64}|opt-outs\/[a-f0-9]{64}/);
+});
+
+test("cleanup removes old webhook dedupe records and archives old terminal requests", async () => {
+  const { mapFor } = makeMockStores();
+  const now = new Date("2026-07-27T00:00:00.000Z").getTime();
+  mapFor("welkom-sms-history").set("twilio-message-sids/SMold123", JSON.stringify({
+    messageSid: "SMold123",
+    receivedAt: "2026-07-01T00:00:00.000Z"
+  }));
+  const created = await dataStore.createSubstitutionRequest(baseSubstitutionRequest({
+    requestId: "req_cleanup",
+    createdAt: "2026-06-01T00:00:00.000Z",
+    updatedAt: "2026-06-01T00:00:00.000Z",
+    expiresAt: "2026-06-03T00:00:00.000Z"
+  }));
+  assert.equal(created.ok, true);
+
+  const cleanup = await dataStore.cleanupDataStoreRecords({ now, max: 10 });
+  assert.equal(cleanup.removedWebhookDedupe, 1);
+  assert.equal(cleanup.archivedExpiredRequests, 1);
+  assert.equal(mapFor("welkom-sms-history").has("twilio-message-sids/SMold123"), false);
+  const archived = JSON.parse(mapFor("welkom-sms-substitution-requests").get("requests/req_cleanup"));
+  assert.ok(archived.archivedAt);
+});
+
+test("audit entries redact secrets and customer contact data", async () => {
+  const { mapFor } = makeMockStores();
+  await dataStore.createAuditRecord({
+    type: "sms_failure",
+    actor: "Staff",
+    details: {
+      phone: "+15551234567",
+      email: "sarah@example.com",
+      password: "never-store",
+      token: "raw-token"
+    }
+  });
+  const auditBody = Array.from(mapFor("welkom-sms-audit").values()).join("\n");
+  assert.doesNotMatch(auditBody, /\+15551234567|sarah@example.com|never-store|raw-token/);
+  assert.match(auditBody, /\+15\*{7}67|sa\*\*\*@ex\*\*\*\.com|\[redacted\]/);
+});
+
 function baseSubstitutionRequest(overrides = {}) {
   return {
     shopifyOrderId: "gid://shopify/Order/1",
@@ -255,14 +336,21 @@ test("substitution requests use secure token hashes and public redaction", async
   assert.ok(created.token.length >= 32);
   assert.equal(created.record.tokenHash, dataStore.hashResponseToken(created.token));
   assert.notEqual(created.record.tokenHash, created.token);
+  assert.equal(created.record.publicUrl, undefined);
+  assert.equal(created.record.customerPhoneHash, undefined);
+  assert.equal(created.record.customerPhoneRedacted, undefined);
+  assert.equal(created.record.customerFirstName, undefined);
 
   const publicView = dataStore.safeRequestForCustomer(created.record);
   const body = JSON.stringify(publicView);
   assert.match(body, /Cadbury Crunchie/);
-  assert.doesNotMatch(body, /gid:\/\/shopify|phone-hash|15551234567|tokenHash|customerPhone/i);
+  assert.doesNotMatch(body, /gid:\/\/shopify|phone-hash|15551234567|tokenHash|customerPhone|Sarah/i);
 
   const fetched = await dataStore.getSubstitutionRequestByToken(created.token);
   assert.equal(fetched.requestId, created.record.requestId);
+
+  const guessed = await dataStore.getSubstitutionRequestByToken("abcdefghijklmnopqrstuvwxyz1234567890ABCDEFZ");
+  assert.equal(guessed, null);
 });
 
 test("customer response supports substitutes, refund, store choice and contact without overwriting", async () => {
@@ -308,8 +396,43 @@ test("customer response supports substitutes, refund, store choice and contact w
     { requestItemId: first.requestItemId, type: "store_choice" },
     { requestItemId: second.requestItemId, type: "contact" }
   ]);
-  assert.equal(repeat.ok, false);
-  assert.equal(repeat.code, "ALREADY_SUBMITTED");
+  assert.equal(repeat.ok, true);
+  assert.equal(repeat.alreadySubmitted, true);
+  assert.equal(repeat.record.submittedChoices[0].type, "substitute");
+  assert.equal(repeat.record.submissionVersion, 1);
+});
+
+test("customer response links can be rotated without storing raw tokens", async () => {
+  makeMockStores();
+  const created = await dataStore.createSubstitutionRequest(baseSubstitutionRequest({
+    token: "abcdefghijklmnopqrstuvwxyz1234567890ABCDEFG",
+    baseUrl: "https://sms.example.com"
+  }));
+  const rotated = await dataStore.rotateSubstitutionRequestToken(created.record.requestId, "https://sms.example.com", "Manager");
+  assert.equal(rotated.ok, true);
+  assert.match(rotated.publicUrl, /^https:\/\/sms\.example\.com\/respond\//);
+  assert.equal(rotated.record.publicUrl, undefined);
+  assert.equal(await dataStore.getSubstitutionRequestByToken(created.token), null);
+  assert.equal((await dataStore.getSubstitutionRequestByToken(rotated.token)).requestId, created.record.requestId);
+});
+
+test("concurrent duplicate submissions preserve the first saved response", async () => {
+  makeMockStores();
+  const created = await dataStore.createSubstitutionRequest(baseSubstitutionRequest({
+    token: "concurrentabcdefghijklmnopqrstuvwxyz1234567890"
+  }));
+  const [item] = created.record.items;
+  const firstChoice = [{ requestItemId: item.requestItemId, type: "substitute", optionId: item.substituteOptions[0].optionId }];
+  const secondChoice = [{ requestItemId: item.requestItemId, type: "refund" }];
+  const results = await Promise.all([
+    dataStore.submitSubstitutionResponse(created.token, firstChoice),
+    dataStore.submitSubstitutionResponse(created.token, secondChoice)
+  ]);
+  assert.equal(results.every((result) => result.ok), true);
+  const latest = await dataStore.getSubstitutionRequest(created.record.requestId);
+  assert.equal(latest.submissionVersion, 1);
+  assert.equal(latest.submittedChoices.length, 1);
+  assert.equal(latest.submittedChoices[0].type, "substitute");
 });
 
 test("expired, revoked and completed substitution requests are protected", async () => {
@@ -328,4 +451,39 @@ test("expired, revoked and completed substitution requests are protected", async
   assert.equal(revoked.ok, true);
   const revokedSubmit = await dataStore.submitSubstitutionResponse(active.token, []);
   assert.equal(revokedSubmit.code, "REQUEST_REVOKED");
+});
+
+test("customer link open states are generic and read-only where needed", async () => {
+  makeMockStores();
+  const valid = await dataStore.createSubstitutionRequest(baseSubstitutionRequest({
+    token: "validlinkabcdefghijklmnopqrstuvwxyz1234567890"
+  }));
+  const opened = await dataStore.markSubstitutionRequestOpened(valid.token);
+  assert.equal(opened.ok, true);
+  assert.equal(opened.record.status, "opened");
+
+  const [item] = opened.record.items;
+  const submitted = await dataStore.submitSubstitutionResponse(valid.token, [
+    { requestItemId: item.requestItemId, type: "refund" }
+  ]);
+  assert.equal(submitted.ok, true);
+  const readOnly = await dataStore.markSubstitutionRequestOpened(valid.token);
+  assert.equal(readOnly.ok, true);
+  assert.equal(readOnly.record.status, "customer_responded");
+
+  const expired = await dataStore.createSubstitutionRequest(baseSubstitutionRequest({
+    token: "openexpiredabcdefghijklmnopqrstuvwxyz1234567890",
+    expiresAt: "2020-01-01T00:00:00.000Z"
+  }));
+  const expiredOpen = await dataStore.markSubstitutionRequestOpened(expired.token);
+  assert.equal(expiredOpen.ok, false);
+  assert.equal(expiredOpen.code, "REQUEST_UNAVAILABLE");
+
+  const revoked = await dataStore.createSubstitutionRequest(baseSubstitutionRequest({
+    token: "openrevokedabcdefghijklmnopqrstuvwxyz1234567890"
+  }));
+  await dataStore.updateSubstitutionRequestStatus(revoked.record.requestId, "revoked", "Manager");
+  const revokedOpen = await dataStore.markSubstitutionRequestOpened(revoked.token);
+  assert.equal(revokedOpen.ok, false);
+  assert.equal(revokedOpen.code, "REQUEST_UNAVAILABLE");
 });
