@@ -12,6 +12,7 @@ const {
 } = require("./auth");
 const { checkRateLimit } = require("./rate-limit");
 const { csrfTokenForSession, securityHeaders, validateCsrf } = require("./security");
+const { hasConfig: hasShopifyConfig } = require("./shopify");
 const { validateEnum, validateId, validateObject, validateString } = require("./validation");
 
 const MAX_BODY_BYTES = 16 * 1024;
@@ -78,7 +79,8 @@ function safeClientConfig(env = process.env) {
   return {
     dryRun: String(env.SMS_DRY_RUN ?? env.DRY_RUN ?? "true").toLowerCase() !== "false",
     productionSendingEnabled: String(env.SMS_DRY_RUN ?? env.DRY_RUN ?? "true").toLowerCase() === "false",
-    staffCopyConfigured: Boolean(env.STAFF_COPY_PHONE_NUMBER || env.ADMIN_COPY_PHONE_NUMBER)
+    staffCopyConfigured: Boolean(env.STAFF_COPY_PHONE_NUMBER || env.ADMIN_COPY_PHONE_NUMBER),
+    shopifyConfigured: hasShopifyConfig(env)
   };
 }
 

@@ -603,6 +603,9 @@
     return h("div", { class: "stack" }, [
       card("Step 1: Find Customer", [
         modeToggle,
+        s.mode === "order" && state.config?.shopifyConfigured === false
+          ? h("div", { class: "alert warn", text: "Shopify search is not connected yet. Ask an admin to check Settings, or use manual phone number mode for now." })
+          : null,
         s.mode === "order" ? renderOrderSearch() : renderManualRecipient(),
         s.order ? renderOrderSummary(s.order) : null,
         h("div", { class: "actions" }, [
