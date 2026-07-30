@@ -24,6 +24,7 @@
 
   const state = {
     auth: null,
+    hasAuthenticated: false,
     csrfToken: "",
     route: "/login",
     busy: false,
@@ -325,13 +326,14 @@
   }
 
   function handleExpiredSession() {
-    if (!state.auth && state.route === "/login") return;
+    const shouldNotify = Boolean(state.auth || state.hasAuthenticated);
     state.auth = null;
+    state.hasAuthenticated = false;
     state.csrfToken = "";
     state.config = {};
     state.substitution = emptySubstitutionState();
     state.custom = emptyCustomState();
-    toast("error", "Your session expired. Please log in again.");
+    if (shouldNotify) toast("error", "Your session expired. Please log in again.");
     go("/login");
   }
 
@@ -402,11 +404,13 @@
     try {
       const result = await api("/.netlify/functions/auth-me");
       state.auth = result.user;
+      state.hasAuthenticated = Boolean(result.user);
       state.csrfToken = result.csrfToken || "";
       state.config = result.config || {};
       go(routeFromPath(), false);
     } catch (error) {
       state.auth = null;
+      state.hasAuthenticated = false;
       state.csrfToken = "";
       state.config = {};
       go(window.location.pathname.startsWith("/respond/") ? "/respond" : "/login", false);
@@ -519,6 +523,7 @@
         });
         password = "";
         state.auth = result.user;
+        state.hasAuthenticated = Boolean(result.user);
         state.csrfToken = result.csrfToken || "";
         state.config = result.config || {};
         go(normalizedRole() === "admin" ? "/admin/dashboard" : "/menu");
