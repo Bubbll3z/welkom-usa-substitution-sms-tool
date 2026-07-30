@@ -39,6 +39,7 @@ const {
   archiveTemplate,
   backupPayload,
   cleanupDataStoreRecords,
+  createInboundReply,
   createAuditRecord,
   createMessageRecord,
   createSubstitutionRequest,
@@ -46,6 +47,7 @@ const {
   findByIdempotency,
   findDuplicate,
   getOptOutStatus,
+  getReply,
   getMessageRecord,
   getSubstitutionRequest,
   getSubstitutionRequestByToken,
@@ -56,6 +58,8 @@ const {
   markSubstitutionRequestOpened,
   messageStats,
   publicRecord,
+  publicReply,
+  queryReplies,
   queryMessageRecords,
   recordProcessedTwilioMessage,
   recordsToCsv,
@@ -66,6 +70,8 @@ const {
   safeRequestForStaff,
   saveTemplate,
   submitSubstitutionResponse,
+  markReplyRead,
+  markReplyReviewed,
   updateSubstitutionRequestSms,
   updateSubstitutionRequestStatus,
   updateMessageStatusBySid
@@ -426,6 +432,112 @@ function validateCustomSubstituteTitle(value) {
   return { ok: true, title };
 }
 
+function validateReplacementItems(value) {
+  if (!Array.isArray(value) || !value.length || value.length > 10) {
+    return { ok: false, code: "INVALID_REQUEST", error: "Select between 1 and 10 unavailable items." };
+  }
+
+  const replacements = [];
+  const seen = new Set();
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return invalidRequest();
+    const invalid = validateBody(item, {
+      allowed: ["lineItemId", "substituteVariantId", "customSubstituteTitle", "noSubstitutionAvailable", "includeProductLink"],
+      required: ["lineItemId"]
+    });
+    if (invalid) return invalid;
+    if (!validateGid(item.lineItemId, "LineItem").ok) return invalidRequest();
+    if (seen.has(item.lineItemId)) return { ok: false, code: "LINE_ITEM_INVALID", error: "Each unavailable item can only be selected once." };
+    seen.add(item.lineItemId);
+
+    const noSubstitutionAvailable = item.noSubstitutionAvailable === true;
+    const hasVariant = Boolean(item.substituteVariantId);
+    if (hasVariant && !validateGid(item.substituteVariantId, "ProductVariant").ok) return invalidRequest();
+
+    let customSubstituteTitle = "";
+    if (!hasVariant && !noSubstitutionAvailable) {
+      const customValidation = validateCustomSubstituteTitle(item.customSubstituteTitle);
+      if (!customValidation.ok) return customValidation;
+      customSubstituteTitle = customValidation.title;
+    }
+
+    replacements.push({
+      lineItemId: item.lineItemId,
+      substituteVariantId: hasVariant ? item.substituteVariantId : "",
+      customSubstituteTitle,
+      noSubstitutionAvailable,
+      includeProductLink: item.includeProductLink === true
+    });
+  }
+
+  return { ok: true, replacements };
+}
+
+async function resolveReplacementItems(order, replacements) {
+  const resolved = [];
+  for (const replacement of replacements) {
+    const lineItem = order.lineItems.find((item) => item.id === replacement.lineItemId);
+    if (!lineItem) return { ok: false, code: "LINE_ITEM_INVALID", error: "Selected line item does not belong to this order." };
+
+    if (replacement.noSubstitutionAvailable) {
+      resolved.push({
+        lineItem,
+        substitute: {
+          id: "no-substitute",
+          title: "No substitute available",
+          customSubstitute: true
+        },
+        noSubstitutionAvailable: true
+      });
+      continue;
+    }
+
+    if (replacement.substituteVariantId) {
+      const substituteResult = await getVariantById(replacement.substituteVariantId);
+      if (!substituteResult.body.success) return { ok: false, code: "SUBSTITUTE_INVALID", error: "One selected substitute could not be loaded from Shopify." };
+      const substitute = substituteResult.body.product;
+      if (substitute.productStatus !== "ACTIVE" || !substitute.availableForSale) {
+        return { ok: false, code: "SUBSTITUTE_UNAVAILABLE", error: "One selected substitute is not currently available for sale." };
+      }
+      if (Number.isFinite(substitute.inventoryQuantity) && substitute.inventoryQuantity <= 0) {
+        return { ok: false, code: "SUBSTITUTE_UNAVAILABLE", error: "One selected substitute has no available inventory." };
+      }
+      resolved.push({ lineItem, substitute, noSubstitutionAvailable: false });
+      continue;
+    }
+
+    resolved.push({
+      lineItem,
+      substitute: {
+        id: `custom:${replacement.customSubstituteTitle.toLowerCase()}`,
+        title: replacement.customSubstituteTitle,
+        customSubstitute: true
+      },
+      noSubstitutionAvailable: false
+    });
+  }
+  return { ok: true, resolved };
+}
+
+function summarizeReplacementItems(resolved) {
+  return resolved.map((item, index) => {
+    const action = item.noSubstitutionAvailable ? "no substitute available" : `substitute: ${item.substitute.title}`;
+    return `${index + 1}. ${item.lineItem.title} - ${action}`;
+  }).join("; ");
+}
+
+function fallbackReplacementMessage(order, resolved) {
+  if (resolved.length === 1 && !resolved[0].noSubstitutionAvailable) {
+    return buildSubstitutionMessage({
+      firstName: order.customer.firstName,
+      unavailableItem: resolved[0].lineItem.title,
+      substituteItem: resolved[0].substitute.title,
+      orderName: order.name
+    });
+  }
+  return `Welkom USA: Hi ${order.customer.firstName || "there"}, these items in order #${String(order.name || "").replace(/^#/, "")} need attention: ${summarizeReplacementItems(resolved)}. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.`;
+}
+
 function cleanManualText(value, fallback, max = 120) {
   const clean = String(value || "").trim().replace(/\s+/g, " ");
   if (!clean) return fallback;
@@ -438,8 +550,9 @@ function manualPhoneHash(phone) {
 
 async function handleSendManualSms(event) {
   if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
-  const auth = await requireRole(event, "admin");
-  if (!auth.ok) return error(auth.status || 403, auth.code || "FORBIDDEN", auth.error || "You do not have permission to perform this action.");
+  const authResult = await requireSession(event);
+  if (authResult.error) return authResult.error;
+  const auth = authResult.session;
   const limited = await rateLimit(`sms-action:user:${auth.user.id}`, 10, 10 * 60);
   if (limited) return limited;
 
@@ -689,6 +802,133 @@ async function handleSendSubstitutionSms(event) {
   return json(smsResult.status, { ...smsResult.body, record: publicRecord(updatedRecord || created.record) });
 }
 
+async function handleSendReplacementSms(event) {
+  if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
+  const auth = await requireSession(event);
+  if (auth.error) return auth.error;
+  const staffLimited = await rateLimit(`sms-action:user:${auth.session.user.id}`, 10, 10 * 60);
+  if (staffLimited) return staffLimited;
+
+  const body = parseBody(event);
+  if (!body) return error(400, "INVALID_REQUEST", "Request body must be valid JSON.");
+  const invalid = validateBody(body, {
+    allowed: ["orderId", "replacements", "message", "sendConfirmed", "sendStaffCopy", "idempotencyKey", "authorizedResend"],
+    required: ["orderId", "replacements", "message", "sendConfirmed"]
+  });
+  if (invalid) return invalid;
+  if (body.sendConfirmed !== true) return error(400, "SEND_CONFIRMATION_REQUIRED", "Confirm this SMS before sending.");
+  if (!validateGid(body.orderId, "Order").ok) return invalidRequest();
+
+  const replacementValidation = validateReplacementItems(body.replacements);
+  if (!replacementValidation.ok) return replacementValidation.statusCode ? replacementValidation : error(400, replacementValidation.code, replacementValidation.error);
+
+  const orderResult = await getOrderById(body.orderId);
+  if (!orderResult.body.success) return json(orderResult.status, orderResult.body);
+  const order = orderResult.body.order;
+  const orderValidation = validateOrderForSending(order, { lineItemId: replacementValidation.replacements[0].lineItemId });
+  if (orderValidation.error) return error(orderValidation.status, orderValidation.code, orderValidation.error);
+
+  const optOut = await getOptOutStatus(order.customer.phone);
+  if (optOut?.status === "opted_out") return error(400, "RECIPIENT_OPTED_OUT", "This recipient has opted out. No SMS was sent.");
+
+  const resolvedResult = await resolveReplacementItems(order, replacementValidation.replacements);
+  if (!resolvedResult.ok) return error(400, resolvedResult.code, resolvedResult.error);
+  const resolved = resolvedResult.resolved;
+
+  const fallbackMessage = fallbackReplacementMessage(order, resolved);
+  const finalMessage = String(body.message || "").trim() || fallbackMessage;
+  const messageValidation = validateMessage(finalMessage, order.name);
+  if (!messageValidation.ok) return error(400, messageValidation.code, messageValidation.error);
+
+  const summary = summarizeReplacementItems(resolved);
+  const duplicate = await findDuplicate({
+    orderId: order.id,
+    lineItemId: `multi:${resolved.map((item) => item.lineItem.id).join("|")}`,
+    substituteVariantId: resolved.map((item) => item.substitute.id || "").join("|"),
+    customSubstituteTitle: summary
+  });
+  if (duplicate && !body.authorizedResend) {
+    return json(409, {
+      success: false,
+      code: "DUPLICATE_MESSAGE",
+      error: "A similar replacement message was already sent for this order. Confirm authorised resend to send again.",
+      duplicate: publicRecord(duplicate)
+    });
+  }
+  const orderLimited = await rateLimit(`sms-order:${order.id}`, 3, 60 * 60);
+  if (orderLimited) return orderLimited;
+
+  const first = resolved[0];
+  const idempotencyKey = body.idempotencyKey || `replacement:${order.id}:${messageValidation.message}`;
+  const created = await createMessageRecord({
+    orderId: order.id,
+    orderName: order.name,
+    customerPhoneRedacted: redactPhone(order.customer.phone),
+    customerFirstName: order.customer.firstName,
+    unavailableLineItemId: `multi:${resolved.map((item) => item.lineItem.id).join("|")}`,
+    unavailableTitle: resolved.length === 1 ? first.lineItem.title : `${resolved.length} unavailable items`,
+    substituteVariantId: resolved.length === 1 && !first.substitute.customSubstitute ? first.substitute.id : "",
+    substituteTitle: resolved.length === 1 ? first.substitute.title : summary,
+    customSubstitute: resolved.some((item) => item.substitute.customSubstitute),
+    customSubstituteTitle: summary,
+    message: messageValidation.message,
+    staffIdentity: auth.session.staffName,
+    initialTwilioStatus: "created",
+    latestTwilioStatus: "created",
+    idempotencyKey
+  });
+  if (!created.ok) return error(500, created.code || "STORAGE_ERROR", created.error || "Message history could not be saved.");
+  if (created.idempotent) {
+    return json(200, { success: true, idempotent: true, message: "This request was already processed.", record: publicRecord(created.record) });
+  }
+
+  const smsResult = await sendSms({
+    phone: order.customer.phone,
+    message: messageValidation.message,
+    orderName: order.name,
+    recordId: created.record.id
+  });
+
+  let staffCopy = { attempted: false, configured: Boolean(process.env.STAFF_COPY_PHONE_NUMBER || process.env.ADMIN_COPY_PHONE_NUMBER) };
+  const copyPhone = process.env.STAFF_COPY_PHONE_NUMBER || process.env.ADMIN_COPY_PHONE_NUMBER || "";
+  if (smsResult.body.success && body.sendStaffCopy === true && copyPhone) {
+    const copyMessage = `Welkom USA: STAFF COPY - Replacement SMS sent to ${redactPhone(order.customer.phone)} for order ${order.name}. ${messageValidation.message}`;
+    const copyResult = await sendSms({ phone: copyPhone, message: copyMessage.slice(0, Number(process.env.MAX_SMS_LENGTH || 320)), orderName: "", recordId: created.record.id });
+    staffCopy = {
+      attempted: true,
+      configured: true,
+      success: Boolean(copyResult.body.success),
+      message: copyResult.body.success ? "Staff copy sent." : copyResult.body.error
+    };
+  }
+
+  const updatedRecord = await saveRecord({
+    ...created.record,
+    dryRun: smsResult.body.dryRun,
+    twilioMessageSid: smsResult.body.sid || "",
+    initialTwilioStatus: smsResult.body.providerStatus || "failed",
+    latestTwilioStatus: smsResult.body.providerStatus || "failed",
+    failureReason: smsResult.body.success ? "" : smsResult.body.error
+  });
+  await createAuditRecord({
+    type: smsResult.body.success ? "sms_send" : "sms_failure",
+    actor: auth.session.staffName,
+    messageRecordId: created.record.id,
+    details: { mode: "replacement", orderName: order.name, itemCount: resolved.length, dryRun: smsResult.body.dryRun, providerStatus: smsResult.body.providerStatus, staffCopyAttempted: staffCopy.attempted }
+  }).catch(() => {});
+
+  if (smsResult.log) logger.error("Twilio replacement send error", smsResult.log);
+  logger.info("Replacement SMS processed", {
+    orderName: order.name,
+    itemCount: resolved.length,
+    dryRun: smsResult.body.dryRun,
+    providerStatus: smsResult.body.providerStatus,
+    staffIdentity: auth.session.staffName
+  });
+
+  return json(smsResult.status, { ...smsResult.body, staffCopy, record: publicRecord(updatedRecord || created.record) });
+}
+
 async function handleHistory(event) {
   const auth = await requireSession(event);
   if (auth.error) return auth.error;
@@ -770,6 +1010,7 @@ function safeConfigStatus() {
     sessionDurationMinutes: Number(process.env.SESSION_DURATION_MINUTES || 480),
     authRequired: authRequired(),
     consentEnforced: true,
+    staffCopyConfigured: Boolean(process.env.STAFF_COPY_PHONE_NUMBER || process.env.ADMIN_COPY_PHONE_NUMBER),
     cloudflareRequired: false
   };
 }
@@ -1161,6 +1402,53 @@ async function handleHistoryRecord(event, route) {
   return json(200, { success: true, record: publicRecord(record) });
 }
 
+async function handleReplies(event) {
+  const auth = await requireSession(event);
+  if (auth.error) return auth.error;
+  const params = new URLSearchParams(event.rawQuery || "");
+  try {
+    const result = await queryReplies(process.env, {
+      page: params.get("page"),
+      limit: params.get("limit"),
+      query: params.get("query") || params.get("search"),
+      status: params.get("status")
+    });
+    return json(200, { success: true, ...result });
+  } catch (storageError) {
+    logger.error("Reply storage read error", { error: storageError.message });
+    return json(200, {
+      success: true,
+      replies: [],
+      page: 1,
+      limit: 25,
+      total: 0,
+      totalPages: 1,
+      storageHealthy: false,
+      warning: "Replies cannot be loaded because message storage is temporarily unavailable."
+    });
+  }
+}
+
+async function handleReplyRecord(event, route) {
+  const auth = await requireSession(event);
+  if (auth.error) return auth.error;
+  const id = route.replace(/^replies\//, "").replace(/\/.*$/, "");
+  const reply = await getReply(id);
+  if (!reply) return error(404, "NOT_FOUND", "Reply was not found.");
+  return json(200, { success: true, reply: publicReply(reply, true) });
+}
+
+async function handleReplyAction(event, route) {
+  const auth = await requireSession(event);
+  if (auth.error) return auth.error;
+  const match = route.match(/^replies\/([^/]+)\/(read|review)$/);
+  if (!match) return error(404, "NOT_FOUND", "Not found.");
+  const [, id, action] = match;
+  const result = action === "read" ? await markReplyRead(id) : await markReplyReviewed(id, auth.session.staffName);
+  if (!result.ok) return error(result.code === "NOT_FOUND" ? 404 : 400, result.code, result.error);
+  return json(200, { success: true, reply: result.reply });
+}
+
 async function handleTwilioStatus(event) {
   const params = parseForm(event);
   const url = externallyVisibleWebhookUrl(event, "twilio-status");
@@ -1210,6 +1498,17 @@ async function handleTwilioInbound(event) {
     associatedRecordId: params.RequestId || ""
   });
   if (processed.duplicate) return twiml();
+  await createInboundReply({
+    messageSid,
+    fromHash: hashPhone(from),
+    fromRedacted: redactPhone(from),
+    toRedacted: redactPhone(to),
+    body: params.Body || "",
+    classification: STOP_KEYWORDS.has(keyword) ? "stop" : HELP_KEYWORDS.has(keyword) ? "help" : "ordinary",
+    receivedAt: new Date().toISOString()
+  }).catch((replyError) => {
+    logger.error("Inbound reply save error", { error: replyError.message });
+  });
   if (STOP_KEYWORDS.has(keyword)) {
     await saveOptOutStatus({ phone: from, fromRedacted: redactPhone(from), toRedacted: redactPhone(to), messageSid, keyword, status: "opted_out" });
     return twiml("You have been opted out and will not receive further non-essential Welkom USA SMS messages.");
@@ -1265,6 +1564,8 @@ exports.handler = async (event) => {
   if (route === "session" && event.httpMethod === "GET") return handleSession(event);
   if (route === "dashboard" && event.httpMethod === "GET") return handleDashboard(event);
   if (route === "config-diagnostics" && event.httpMethod === "GET") return handleConfigDiagnostics(event);
+  if (route === "replies" && event.httpMethod === "GET") return handleReplies(event);
+  if (/^replies\/[^/]+$/.test(route) && event.httpMethod === "GET") return handleReplyRecord(event, route);
   if (route === "message-history" && event.httpMethod === "GET") return handleHistory(event);
   if (route.startsWith("message-history/") && event.httpMethod === "GET") return handleHistoryRecord(event, route);
   if (route === "substitution-requests" && event.httpMethod === "GET") return handleListSubstitutionRequests(event);
@@ -1284,7 +1585,9 @@ exports.handler = async (event) => {
   if (route === "line-item-substitutions") return handleLineItemSubstitutions(event);
   if (route === "duplicate-check") return handleDuplicateCheck(event);
   if (route === "send-substitution-sms") return handleSendSubstitutionSms(event);
+  if (route === "send-replacement-sms") return handleSendReplacementSms(event);
   if (route === "send-manual-sms") return handleSendManualSms(event);
+  if (/^replies\/[^/]+\/(read|review)$/.test(route)) return handleReplyAction(event, route);
   if (route === "substitution-requests") return handleCreateSubstitutionRequest(event);
   if (/^substitution-requests\/[^/]+\/(revoke|complete|review|resend)$/.test(route)) return handleRequestAction(event, route);
 

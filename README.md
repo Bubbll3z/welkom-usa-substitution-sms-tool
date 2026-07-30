@@ -1,6 +1,6 @@
 # Welkom USA Substitution SMS Tool
 
-Internal Netlify-ready dashboard for Welkom USA staff to search a Shopify order, select an unavailable item, choose a substitute product variant, edit the approved SMS, and send it through Twilio.
+Internal Netlify-ready dashboard for Welkom USA staff to search a Shopify order, select one or more unavailable items, choose substitute product variants or custom substitutes, edit the approved SMS, and send it through Twilio.
 
 ## Production Safety
 
@@ -9,6 +9,7 @@ This branch includes:
 - Staff user login with scrypt password hashes stored in Netlify Blobs.
 - Hashed server-side sessions stored in Netlify Blobs and sent through secure HttpOnly cookies.
 - Account lockout after repeated failed login attempts.
+- Dedicated staff login at `/login`, staff menu at `/menu`, and role-based admin routes.
 - Exact Shopify order-number matching.
 - Shopify order custom attribute consent validation for `SMS consent = Yes`.
 - Server-side order revalidation before sending.
@@ -16,6 +17,9 @@ This branch includes:
 - Cancelled-order, missing-phone, missing-consent, invalid-line-item, and unavailable-substitute blocking.
 - Shopify product/variant search by selected item, title, SKU, or barcode.
 - Inventory and available-for-sale checks.
+- Multi-item replacement SMS through `/api/send-replacement-sms`.
+- Manual physical-shop/customer-service SMS for approved staff use.
+- Inbound Twilio replies saved for staff review.
 - Idempotency and duplicate-send protection.
 - Persistent message history through Netlify Blobs, with memory fallback for local development/tests.
 - Twilio status callback endpoint with signature validation.
@@ -94,11 +98,15 @@ PUBLIC_APP_URL=https://your-netlify-site.netlify.app
 
 MESSAGE_STORAGE_PROVIDER=netlify-blobs
 BLOB_INIT_ENABLED=true
+REMEMBER_ME_DAYS=14
+STAFF_COPY_PHONE_NUMBER=
 SUBSTITUTION_TOKEN_PEPPER=
 RATE_LIMIT_KEY_PEPPER=
 ```
 
-Staff passwords are **not** configured through environment variables anymore. Create staff users with `npm run create-admin` first, then create additional staff users from admin endpoints/tools. For Shopify order and product lookup, use either a static installed custom-app Admin API token in `SHOPIFY_ADMIN_ACCESS_TOKEN`, or Shopify's 24-hour client-credentials flow with `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET` and `SHOPIFY_CLIENT_CREDENTIALS_ENABLED=true`. In the client-credentials flow the app requests a fresh token server-side and refreshes it when it is close to expiry. `SHOPIFY_WEBHOOK_SECRET` is optional unless you configure Shopify webhooks; if omitted, webhook validation falls back to `SHOPIFY_CLIENT_SECRET`. Use either Twilio Auth Token auth or API Key auth. Use either a Twilio sender phone number/from number or a Messaging Service SID.
+Staff passwords are **not** configured through environment variables anymore. Create staff users with `npm run create-admin` first, then create additional staff users from the admin user screen. `REMEMBER_ME_DAYS` controls the absolute session limit for the Remember me checkbox; the idle timeout is still 30 minutes. `STAFF_COPY_PHONE_NUMBER` is optional and enables the **Send me a copy** checkbox for substitution SMS review.
+
+For Shopify order and product lookup, use either a static installed custom-app Admin API token in `SHOPIFY_ADMIN_ACCESS_TOKEN`, or Shopify's 24-hour client-credentials flow with `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET` and `SHOPIFY_CLIENT_CREDENTIALS_ENABLED=true`. In the client-credentials flow the app requests a fresh token server-side and refreshes it when it is close to expiry. `SHOPIFY_WEBHOOK_SECRET` is optional unless you configure Shopify webhooks; if omitted, webhook validation falls back to `SHOPIFY_CLIENT_SECRET`. Use either Twilio Auth Token auth or API Key auth. Use either a Twilio sender phone number/from number or a Messaging Service SID.
 `PUBLIC_APP_URL` should be the deployed Netlify site URL so customer response links open the production app. `SUBSTITUTION_TOKEN_PEPPER` should be a random secret used only for hashing customer response tokens. `RATE_LIMIT_KEY_PEPPER` is optional but recommended so rate-limit hashes cannot be compared across environments.
 
 ## Production Secret Checklist
@@ -213,6 +221,33 @@ https://your-netlify-site.netlify.app/api/twilio-inbound
 ```
 
 Both callbacks validate `X-Twilio-Signature` using `TWILIO_AUTH_TOKEN` before processing. Delivery status updates are accepted only for known Twilio statuses and are applied by `MessageSid`. Inbound STOP/HELP messages are recorded safely with masked phone numbers; STOP stores an opt-out marker so future non-essential SMS sends to that phone are blocked. Do not try to override Twilio's own opt-out enforcement.
+
+Ordinary inbound replies are saved to the persistent history store and appear in **View Replies** for staff. The list view shows masked phone numbers and a short preview; opening a reply requires staff authentication.
+
+## Staff Routes
+
+Staff users can use:
+
+```text
+/menu
+/substitution/order
+/substitution/items
+/substitution/message
+/replies
+/history
+/custom-message
+```
+
+Admin users can also use:
+
+```text
+/admin/dashboard
+/admin/templates
+/admin/settings
+/admin/users
+/admin/backup
+/admin/diagnostics
+```
 
 ## Netlify Blobs Storage
 

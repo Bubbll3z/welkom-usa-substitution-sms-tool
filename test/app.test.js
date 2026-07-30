@@ -260,6 +260,21 @@ test("authentication supports login, session, logout, wrong password, and expire
   assert.equal(afterLogout.statusCode, 401);
 });
 
+test("remember me login extends only the absolute session limit", async () => {
+  process.env.REMEMBER_ME_DAYS = "2";
+  const response = await authLoginHandler(event("/.netlify/functions/auth-login", {
+    username: "admin",
+    password: "test12345",
+    rememberMe: true
+  }, { "x-forwarded-proto": "https" }));
+  assert.equal(response.statusCode, 200);
+  const body = JSON.parse(response.body);
+  assert.equal(body.success, true);
+  assert.ok(new Date(body.absoluteExpiresAt).getTime() - new Date(body.expiresAt).getTime() > 8 * 60 * 60 * 1000);
+  assert.doesNotMatch(response.body, /test12345|passwordHash|passwordSalt/);
+  delete process.env.REMEMBER_ME_DAYS;
+});
+
 test("unauthenticated API request is rejected", async () => {
   const response = await handler(event("/api/order-search", { query: "#1023" }));
   assert.equal(response.statusCode, 401);
@@ -732,6 +747,57 @@ test("send supports a validated custom substitute title when Shopify search has 
   }
 });
 
+test("guided replacement SMS supports multiple order items with server-side validation", async () => {
+  const cookie = await loginCookie("staffpass123", "staff");
+  const twoItemOrder = orderNode({
+    lineItems: {
+      nodes: [
+        orderNode().lineItems.nodes[0],
+        {
+          ...orderNode().lineItems.nodes[0],
+          id: "gid://shopify/LineItem/2",
+          title: "Mrs Balls Chutney 470g",
+          quantity: 2,
+          variant: {
+            ...orderNode().lineItems.nodes[0].variant,
+            id: "gid://shopify/ProductVariant/old2",
+            sku: "CHUTNEY470",
+            barcode: "600333"
+          }
+        }
+      ]
+    }
+  });
+  const originalFetch = global.fetch;
+  global.fetch = mockFetch({ order: twoItemOrder });
+  try {
+    const response = await handler(event("/api/send-replacement-sms", {
+      orderId: "gid://shopify/Order/1",
+      replacements: [
+        {
+          lineItemId: "gid://shopify/LineItem/1",
+          substituteVariantId: "gid://shopify/ProductVariant/new"
+        },
+        {
+          lineItemId: "gid://shopify/LineItem/2",
+          customSubstituteTitle: "Mrs Balls Peach Chutney 470g"
+        }
+      ],
+      message: "Welkom USA: Hi Sarah, these items in order #1023 need attention: 1. Cadbury Crunchie Chocolate Bar 44g - substitute: Cadbury Flake Chocolate Bar 32g; 2. Mrs Balls Chutney 470g - substitute: Mrs Balls Peach Chutney 470g. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.",
+      sendConfirmed: true,
+      idempotencyKey: "multi-replacement-1"
+    }, { cookie }));
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.success, true);
+    assert.equal(body.record.unavailableTitle, "2 unavailable items");
+    assert.match(body.record.substituteTitle, /Mrs Balls Peach Chutney/);
+    assert.doesNotMatch(JSON.stringify(body.record), /15551234567|sarah@example\.com|123 Main St/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("manual SMS requires consent confirmation, redacts phone, and stays in dry-run", async () => {
   const cookie = await loginCookie();
   const payload = {
@@ -1016,9 +1082,9 @@ test("customer submission attempts are throttled by IP and token", async () => {
 test("public customer response page markup is present", () => {
   const html = fs.readFileSync(path.join(__dirname, "../public/index.html"), "utf8");
   const app = fs.readFileSync(path.join(__dirname, "../public/app.js"), "utf8");
-  assert.match(html, /id="respondPage"/);
-  assert.match(html, /Choose what you would prefer/);
-  assert.match(app, /Confirm My Choices/);
+  assert.match(html, /id="main"/);
+  assert.match(app, /Choose what you would prefer/);
+  assert.match(app, /Submit choice/);
   assert.match(app, /choice-card/);
 });
 
@@ -1379,15 +1445,43 @@ test("Twilio inbound STOP and HELP are signature-validated and safe", async () =
   assert.match(help.body, /STOP/i);
 });
 
-test("manual arbitrary destination SMS is admin-only and requires confirmation", async () => {
+test("Twilio inbound ordinary replies are stored for staff review", async () => {
+  process.env.TWILIO_AUTH_TOKEN = "secret";
+  const params = { MessageSid: "SMREPLY123", From: "+15551234567", To: "+15550000000", Body: "SUBSTITUTE please" };
+  const url = "https://example.netlify.app/api/twilio-inbound";
+  const signature = twilio.getExpectedTwilioSignature(process.env.TWILIO_AUTH_TOKEN, url, params);
+  const inbound = await handler(formEvent("/api/twilio-inbound", params, signature));
+  assert.equal(inbound.statusCode, 200);
+
+  const cookie = await loginCookie("staffpass123", "staff");
+  const list = await handler(event("/api/replies", undefined, { cookie }, "GET"));
+  assert.equal(list.statusCode, 200);
+  const body = JSON.parse(list.body);
+  assert.equal(body.replies.length, 1);
+  assert.equal(body.replies[0].messageSid, "SMREPLY123");
+  assert.equal(body.replies[0].fromRedacted, "+15*******67");
+  assert.equal(body.replies[0].preview, "SUBSTITUTE please");
+  assert.equal(body.replies[0].body, "");
+  assert.doesNotMatch(JSON.stringify(body.replies[0]), /15551234567|secret/);
+
+  const detail = await handler(event(`/api/replies/${body.replies[0].id}`, undefined, { cookie }, "GET"));
+  assert.equal(detail.statusCode, 200);
+  assert.equal(JSON.parse(detail.body).reply.body, "SUBSTITUTE please");
+
+  const reviewed = await handler(event(`/api/replies/${body.replies[0].id}/review`, {}, { cookie }));
+  assert.equal(reviewed.statusCode, 200);
+  assert.equal(JSON.parse(reviewed.body).reply.reviewed, true);
+});
+
+test("manual arbitrary destination SMS is staff allowed but requires consent and confirmation", async () => {
   const staffCookie = await loginCookie("staffpass123", "staff");
   const staff = await handler(event("/api/send-manual-sms", {
     phone: "+15551234567",
     consentConfirmed: true,
     sendConfirmed: true,
-    message: "Welkom USA: Manual staff rejection test. Reply STOP to opt out."
+    message: "Welkom USA: Manual staff permission test. Reply STOP to opt out."
   }, { cookie: staffCookie }));
-  assert.equal(staff.statusCode, 403);
+  assert.equal(staff.statusCode, 200);
 
   const adminCookie = await loginCookie();
   const unconfirmed = await handler(event("/api/send-manual-sms", {

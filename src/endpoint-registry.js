@@ -19,6 +19,9 @@ const API_ENDPOINTS = [
   { route: "public/substitution-response", methods: ["POST"], access: ACCESS_TYPES.customerToken },
   { route: "dashboard", methods: ["GET"], access: ACCESS_TYPES.staff },
   { route: "config-diagnostics", methods: ["GET"], access: ACCESS_TYPES.staff },
+  { route: "replies", methods: ["GET"], access: ACCESS_TYPES.staff },
+  { pattern: /^replies\/[A-Za-z0-9_-]+$/, methods: ["GET"], access: ACCESS_TYPES.staff },
+  { pattern: /^replies\/[A-Za-z0-9_-]+\/(read|review)$/, methods: ["POST"], access: ACCESS_TYPES.staff },
   { route: "message-history", methods: ["GET"], access: ACCESS_TYPES.staff },
   { pattern: /^message-history\/[A-Za-z0-9_-]+$/, methods: ["GET"], access: ACCESS_TYPES.staff },
   { route: "substitution-requests", methods: ["GET", "POST"], access: ACCESS_TYPES.staff },
@@ -35,7 +38,8 @@ const API_ENDPOINTS = [
   { route: "line-item-substitutions", methods: ["POST"], access: ACCESS_TYPES.staff },
   { route: "duplicate-check", methods: ["POST"], access: ACCESS_TYPES.staff },
   { route: "send-substitution-sms", methods: ["POST"], access: ACCESS_TYPES.staff },
-  { route: "send-manual-sms", methods: ["POST"], access: ACCESS_TYPES.staff }
+  { route: "send-manual-sms", methods: ["POST"], access: ACCESS_TYPES.staff },
+  { route: "send-replacement-sms", methods: ["POST"], access: ACCESS_TYPES.staff }
 ];
 
 const FUNCTION_ENDPOINTS = [

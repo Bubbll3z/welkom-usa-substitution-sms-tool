@@ -812,6 +812,154 @@ async function getOptOutStatus(phone, env = process.env) {
   return record?.phoneHash ? record : null;
 }
 
+function classifyReply(body = "") {
+  const keyword = String(body || "").trim().split(/\s+/)[0]?.toUpperCase() || "";
+  if (["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"].includes(keyword)) return "stop";
+  if (["HELP", "INFO"].includes(keyword)) return "help";
+  return "ordinary";
+}
+
+async function findRecentOutgoingForPhone(redactedPhone, env = process.env) {
+  const records = await listMessageRecords(env, 1000).catch(() => []);
+  return records.find((record) => record.customerPhoneRedacted === redactedPhone && record.dryRun === false) ||
+    records.find((record) => record.customerPhoneRedacted === redactedPhone) ||
+    null;
+}
+
+async function createInboundReply(data, env = process.env) {
+  const messageSid = scrubCustomerText(data.messageSid || "", 80);
+  if (!/^SM[A-Za-z0-9]{3,64}$/.test(messageSid)) return { ok: false, code: "INVALID_MESSAGE_SID" };
+  const existing = await getJsonSafe(store("history", env), `replies/by-sid/${messageSid}`);
+  if (existing?.replyId) return { ok: true, duplicate: true, reply: existing };
+  const fromRedacted = data.fromRedacted || "[redacted]";
+  const matched = data.matchedMessageRecordId ? null : await findRecentOutgoingForPhone(fromRedacted, env);
+  const replyId = data.replyId || newId("reply");
+  const createdAt = data.createdAt || nowIso();
+  const reply = {
+    schemaVersion: SCHEMA_VERSION,
+    replyId,
+    messageSid,
+    receivedAt: data.receivedAt || createdAt,
+    fromHash: data.fromHash || "",
+    fromRedacted,
+    toRedacted: data.toRedacted || "[redacted]",
+    body: scrubCustomerText(data.body || "", 1000),
+    preview: scrubCustomerText(data.body || "", 140),
+    matchedMessageRecordId: data.matchedMessageRecordId || matched?.id || "",
+    matchedOrderId: data.matchedOrderId || matched?.orderId || "",
+    matchedOrderName: data.matchedOrderName || matched?.orderName || "",
+    customerName: scrubCustomerText(data.customerName || matched?.customerFirstName || "", 120),
+    read: Boolean(data.read),
+    reviewed: Boolean(data.reviewed),
+    reviewedBy: scrubCustomerText(data.reviewedBy || "", 120),
+    reviewedAt: data.reviewedAt || null,
+    classification: data.classification || classifyReply(data.body),
+    createdAt,
+    updatedAt: data.updatedAt || createdAt
+  };
+  try {
+    await setJson(store("history", env), `replies/by-sid/${messageSid}`, reply, { onlyIfNew: true });
+    await setJson(store("history", env), `replies/${replyId}`, reply, { onlyIfNew: true });
+    await createAuditRecord({ type: "inbound_reply_received", details: { replyId, classification: reply.classification, matched: Boolean(reply.matchedMessageRecordId) } }, env);
+    return { ok: true, duplicate: false, reply };
+  } catch (error) {
+    const saved = await getJsonSafe(store("history", env), `replies/by-sid/${messageSid}`);
+    if (saved?.replyId) return { ok: true, duplicate: true, reply: saved };
+    return { ok: false, code: "STORAGE_ERROR", error: "Reply could not be saved." };
+  }
+}
+
+function publicReply(reply, includeBody = false) {
+  if (!reply?.replyId) return null;
+  return {
+    schemaVersion: reply.schemaVersion || SCHEMA_VERSION,
+    id: reply.replyId,
+    replyId: reply.replyId,
+    messageSid: reply.messageSid,
+    receivedAt: reply.receivedAt,
+    fromRedacted: reply.fromRedacted,
+    toRedacted: reply.toRedacted,
+    preview: scrubText(reply.preview || reply.body || ""),
+    body: includeBody ? scrubText(reply.body || "") : "",
+    matchedMessageRecordId: reply.matchedMessageRecordId || "",
+    matchedOrderId: reply.matchedOrderId || "",
+    matchedOrderName: scrubText(reply.matchedOrderName || ""),
+    customerName: scrubText(reply.customerName || ""),
+    read: Boolean(reply.read),
+    reviewed: Boolean(reply.reviewed),
+    reviewedBy: scrubText(reply.reviewedBy || ""),
+    reviewedAt: reply.reviewedAt || null,
+    classification: reply.classification || "ordinary",
+    createdAt: reply.createdAt,
+    updatedAt: reply.updatedAt
+  };
+}
+
+async function getReply(id, env = process.env) {
+  if (!id || !/^[A-Za-z0-9_-]+$/.test(String(id))) return null;
+  const reply = await getJsonSafe(store("history", env), `replies/${id}`);
+  return reply?.replyId ? reply : null;
+}
+
+function filterReplies(replies, filters = {}) {
+  const query = String(filters.query || filters.search || "").trim().toLowerCase();
+  const status = String(filters.status || "").trim().toLowerCase();
+  let result = replies;
+  if (query) {
+    result = result.filter((reply) => [
+      reply.fromRedacted,
+      reply.preview,
+      reply.body,
+      reply.matchedOrderName,
+      reply.customerName,
+      reply.classification
+    ].some((value) => String(value || "").toLowerCase().includes(query)));
+  }
+  if (status === "unread") result = result.filter((reply) => !reply.read);
+  if (status === "reviewed") result = result.filter((reply) => reply.reviewed);
+  if (status === "unmatched") result = result.filter((reply) => !reply.matchedMessageRecordId);
+  return result;
+}
+
+async function queryReplies(env = process.env, filters = {}) {
+  const limit = Math.min(Math.max(Number(filters.limit || 25), 1), 100);
+  const page = Math.max(Number(filters.page || 1), 1);
+  const raw = await listRawByPrefix(store("history", env), "replies/", 1000);
+  const unique = new Map();
+  for (const reply of raw) {
+    if (reply?.replyId && !unique.has(reply.replyId)) unique.set(reply.replyId, reply);
+  }
+  const records = filterReplies(Array.from(unique.values()), filters)
+    .sort((a, b) => String(b.receivedAt || b.createdAt).localeCompare(String(a.receivedAt || a.createdAt)));
+  const start = (page - 1) * limit;
+  return {
+    replies: records.slice(start, start + limit).map((reply) => publicReply(reply)),
+    page,
+    limit,
+    total: records.length,
+    totalPages: Math.max(Math.ceil(records.length / limit), 1)
+  };
+}
+
+async function markReplyRead(id, env = process.env) {
+  const reply = await getReply(id, env);
+  if (!reply) return { ok: false, code: "NOT_FOUND", error: "Reply was not found." };
+  const next = { ...reply, read: true, updatedAt: nowIso() };
+  await setJson(store("history", env), `replies/${reply.replyId}`, next);
+  await setJson(store("history", env), `replies/by-sid/${reply.messageSid}`, next);
+  return { ok: true, reply: publicReply(next, true) };
+}
+
+async function markReplyReviewed(id, actor = "staff", env = process.env) {
+  const reply = await getReply(id, env);
+  if (!reply) return { ok: false, code: "NOT_FOUND", error: "Reply was not found." };
+  const next = { ...reply, read: true, reviewed: true, reviewedBy: scrubCustomerText(actor, 120), reviewedAt: nowIso(), updatedAt: nowIso() };
+  await setJson(store("history", env), `replies/${reply.replyId}`, next);
+  await setJson(store("history", env), `replies/by-sid/${reply.messageSid}`, next);
+  await createAuditRecord({ type: "reply_reviewed", actor, details: { replyId: id, classification: next.classification } }, env);
+  return { ok: true, reply: publicReply(next, true) };
+}
+
 async function listRawByPrefix(targetStore, prefix, limit = 500) {
   const listed = await targetStore.list({ prefix });
   const keys = (listed.blobs || []).map((blob) => blob.key).filter(Boolean).sort().slice(-limit);
@@ -1058,6 +1206,7 @@ module.exports = {
   createAuditRecord,
   cleanupDataStoreRecords,
   createMessageRecord,
+  createInboundReply,
   createSubstitutionRequest,
   createTemplate,
   defaultTemplate,
@@ -1069,6 +1218,7 @@ module.exports = {
   getMessageRecord,
   getOptOutStatus,
   getProcessedTwilioMessage,
+  getReply,
   getSubstitutionRequest,
   getSubstitutionRequestByToken,
   hashPhoneNumber,
@@ -1076,11 +1226,15 @@ module.exports = {
   idempotencyKey,
   initializeDataStores,
   listMessageRecords,
+  markReplyRead,
+  markReplyReviewed,
   listSubstitutionRequests,
   listTemplates,
   markSubstitutionRequestOpened,
   messageStats,
   publicRecord,
+  publicReply,
+  queryReplies,
   queryMessageRecords,
   recordProcessedTwilioMessage,
   recordsToCsv,

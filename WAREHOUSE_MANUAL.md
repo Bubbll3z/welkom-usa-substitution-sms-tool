@@ -1,133 +1,121 @@
 # Welkom USA SMS App - Warehouse Worker Guide
 
-This app helps staff send a safe substitution SMS when a customer ordered an item that cannot be sent.
+This app helps staff send substitution SMS messages when an ordered item cannot be sent. It is for Welkom USA customer-service messages only.
 
-## Before You Start
+## The Golden Rules
 
-Use this app only for Welkom USA customer messages.
-
-Only send an SMS when:
-
-- The customer has a valid phone number.
-- The app shows SMS consent, or you are using Manual physical-shop SMS and the customer gave permission.
-- You have checked the unavailable item and selected the correct substitute.
-- The message still says `Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.`
-
-Do not use this app for marketing messages.
+- Only send an SMS when the app shows consent, or when the customer gave permission in person for a manual physical-shop message.
+- Always check the order number, customer name, unavailable item and substitute before sending.
+- Keep the `Reply STOP to opt out` wording in the SMS.
+- Do not use this app for marketing.
+- Do not send test messages to real customers.
 
 ## Log In
 
-1. Open the Welkom USA SMS app link.
-2. Enter your staff username.
-3. Enter your staff password.
-4. Click **Log in**.
+1. Open the Welkom USA SMS app.
+2. Enter your username.
+3. Enter your password.
+4. Click **Log In**.
+5. Only tick **Remember me** on an approved warehouse computer.
 
-If login fails, ask a manager to check that your staff user is active or reset your password.
+If login fails, ask a manager to reset your password or check that your user is active.
+
+## Main Menu
+
+After login you will see the menu.
+
+- **Send Substitution SMS**: search an order, choose items and send a replacement message.
+- **View Replies**: read customer SMS replies that came back to Twilio.
+- **Message History**: check dry-run and real SMS history.
+- **Custom Message**: send an approved one-off SMS to a customer who gave permission.
+- **Logout**: sign out when you are done.
+
+Managers may also see admin options such as settings, users, templates and backup.
 
 ## Send a Shopify Order Substitution SMS
 
-Use this when staff already know the exact substitute and want to send the normal one-message approval SMS.
+Use this for Shopify orders.
 
-1. Click **Search Order**.
-2. Type the Shopify order number, for example `1023` or `#1023`.
-3. Click **Search**.
-4. Check the customer details.
-5. Make sure the app does not show a red SMS consent warning.
-6. Under **Unavailable Item**, select the product that cannot be sent.
-7. Under **Substitution Options**, search for the replacement product.
-8. Select the correct substitute.
-9. Read the SMS on the right side carefully.
-10. Edit the message only if needed.
-11. Click **Send SMS**.
+1. Click **Send Substitution SMS**.
+2. In **Step 1**, enter the Shopify order number, for example `1023` or `#1023`.
+3. Click **Search Order**.
+4. Check the customer and order summary.
+5. If the app says **No SMS consent**, do not send an SMS. Use email if an email address is shown.
+6. Click **Continue to Items**.
+7. In **Step 2**, tick each item that is unavailable.
+8. For each selected item, search for the substitute by title, SKU or barcode.
+9. Select the correct substitute, or type a custom substitute if Shopify does not show it.
+10. If no substitute is available, tick **No substitute available**.
+11. Click **Review Message**.
+12. In **Step 3**, read the SMS carefully.
+13. Edit only what is needed.
+14. Click **Send SMS**.
+15. Confirm the send popup.
 
-The normal message format is:
+Standard SMS example:
 
 ```text
-Welkom USA: Hi [FIRST NAME], [UNAVAILABLE ITEM] in order #[ORDER NUMBER] is unavailable. We can substitute it with [SUBSTITUTE ITEM]. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.
+Welkom USA: Hi Sarah, Cadbury Astros 40g in order #1023 is unavailable. We can substitute it with Cadbury Flake 32g. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.
 ```
-
-## Send a Secure Customer Choice Link
-
-Use this when the customer should choose between one or more approved substitutes, a refund, or asking staff to contact them.
-
-1. Click **Search Order**.
-2. Search the Shopify order number.
-3. Under **Unavailable Item**, select the item that cannot be sent.
-4. Under **Substitution Options**, search for each replacement product.
-5. Select up to three approved substitutes.
-6. In **Customer Substitution Request**, click **Add Approved Substitute**.
-7. Add a short staff note only if it helps the customer.
-8. Choose when the link should expire, usually 48 hours.
-9. Read the SMS preview.
-10. Click **Send Customer Request**.
-
-The customer receives a secure link. They can choose a substitute, refund, ask staff to choose, or ask staff to contact them. Staff must review the response before changing anything in Shopify.
-
-Use **Requests** to check whether the customer opened the link, replied, needs review, or whether the request expired.
 
 ## Manual Physical-Shop SMS
 
-Use Manual physical-shop SMS when the customer is not linked to a Shopify order, for example someone who bought in the physical shop.
+Use this when the customer is not linked to a Shopify order, for example a physical-shop customer.
 
-1. Go to **Search Order**.
-2. Open **Manual physical-shop SMS** in the substitution message area.
-3. Enter the customer phone number in international format, for example `+12125551234`.
-4. Add the customer first name if you know it.
-5. Add the unavailable item.
-6. Add the substitute item.
-7. Add a short reference, such as a till slip number or staff note.
-8. Tick the permission checkbox only if the customer gave permission to receive the SMS.
-9. Read the message.
-10. Click **Send Manual SMS**.
+1. Open **Send Substitution SMS**.
+2. Choose **Manual physical-shop SMS**.
+3. Enter the phone number in international format, for example `+12125551234`.
+4. Add the customer's first name if you know it.
+5. Add a reference, such as a till slip number.
+6. Tick the permission checkbox only if the customer gave permission.
+7. Add the unavailable item and substitute.
+8. Review the message.
+9. Send and confirm.
 
-Never tick the permission checkbox if the customer did not agree to receive the message.
+Never tick the permission box if the customer did not agree.
 
-## If the App Blocks Sending
+## View Replies
 
-The app may block sending for safety. This is normal.
+1. Click **View Replies**.
+2. New replies appear at the top.
+3. Open a reply to read the full customer message.
+4. Mark it reviewed after staff have handled it.
+5. If the customer replied `STOP`, do not send more non-essential SMS messages to that number.
 
-Common reasons:
+## Message History
 
-- **No SMS Consent**: Do not send an SMS. If the customer has an email address, email them instead.
-- **Missing phone number**: Use email or contact a manager.
-- **Phone number must start with +**: The number must be in international format.
-- **Message too long**: Shorten the message.
-- **Duplicate warning**: A similar message may already have been sent recently. Check **Sent Messages** before sending again.
-- **Dry run mode**: The app is testing only and did not send a real SMS.
+Use **Message History** to check if a message was:
 
-## Check Sent Messages
+- dry-run only
+- sent
+- failed
+- blocked as a duplicate
+- updated by Twilio delivery status
 
-1. Click **Sent Messages**.
-2. Search by order number, staff name, status, or message text.
-3. Check whether the message was dry-run, sent, failed, or updated by Twilio.
+Phone numbers are masked for privacy.
 
-Phone numbers are partly hidden for customer privacy.
+## Custom Message
 
-## Templates
+Use **Custom Message** only for simple approved customer-service texts.
 
-Managers can use **Templates** to keep the standard substitution message ready.
+1. Enter the approved phone number.
+2. Add a reference.
+3. Confirm the customer gave permission.
+4. Type a clear Welkom USA message.
+5. Send and confirm.
 
-Warehouse staff should normally use the default template and only make small edits when needed.
+The app blocks blank messages, bad phone numbers, missing permission and repeated rapid sends.
 
-## Settings
+## What Red Messages Mean
 
-Use **Settings** to check whether the app is ready.
+- **No SMS consent**: Do not send SMS from the order workflow. Email the customer if possible.
+- **Missing phone number**: Ask a manager or use email.
+- **Phone number invalid**: Use international format starting with `+`.
+- **Message too long**: Shorten the SMS.
+- **Duplicate warning**: Check history before sending again.
+- **Dry run**: The app tested the flow but did not send a real SMS.
+- **Request failed**: Refresh once. If it still fails, show the manager the exact error text.
 
-Green means configured or working.
-Red means something needs attention.
+## End of Shift
 
-Important statuses:
-
-- **Dry run mode**: If this says Dry run, real SMS messages are not being sent.
-- **Production sending**: If this says Blocked, real SMS sending is off.
-- **Storage health**: If this says Needs init, ask a manager to initialize Blob storage.
-- **Twilio sender**: If this is not configured, SMS sending will not work.
-- **Shopify store**: If this is not configured, order search will not work.
-
-## Safety Rules
-
-- Do not send test messages to customers.
-- Do not change the STOP wording.
-- Do not send the same substitution twice unless a manager confirms it.
-- Do not copy customer phone numbers into other tools.
-- Ask a manager before sending a real SMS if anything looks wrong.
+Click **Logout** when you are finished, especially on any shared computer.

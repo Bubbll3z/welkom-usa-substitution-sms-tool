@@ -74,6 +74,14 @@ function rateLimited(result) {
   return error(429, "RATE_LIMITED", "Too many requests. Please wait and try again.", { "Retry-After": String(result.retryAfter || 60) });
 }
 
+function safeClientConfig(env = process.env) {
+  return {
+    dryRun: String(env.SMS_DRY_RUN ?? env.DRY_RUN ?? "true").toLowerCase() !== "false",
+    productionSendingEnabled: String(env.SMS_DRY_RUN ?? env.DRY_RUN ?? "true").toLowerCase() === "false",
+    staffCopyConfigured: Boolean(env.STAFF_COPY_PHONE_NUMBER || env.ADMIN_COPY_PHONE_NUMBER)
+  };
+}
+
 async function handleAuthLogin(event) {
   const wrongMethod = method(event, "POST");
   if (wrongMethod) return wrongMethod;
@@ -81,7 +89,7 @@ async function handleAuthLogin(event) {
   if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
   const body = parseBody(event);
   if (!body) return error(400, "INVALID_REQUEST", "Request body must be valid JSON.");
-  if (!validateObject(body, { allowed: ["username", "password"], required: ["username", "password"] }).ok) return error(400, "INVALID_REQUEST", "Unable to process request");
+  if (!validateObject(body, { allowed: ["username", "password", "rememberMe"], required: ["username", "password"] }).ok) return error(400, "INVALID_REQUEST", "Unable to process request");
   if (!validateString(body.username, { min: 2, max: 80, pattern: /^[A-Za-z0-9._@-]+$/ }).ok) return error(400, "INVALID_REQUEST", "Unable to process request");
 
   const ipLimit = await checkRateLimit({
@@ -92,7 +100,7 @@ async function handleAuthLogin(event) {
   });
   if (!ipLimit.ok) return rateLimited(ipLimit);
 
-  const result = await authenticateUser({ username: body.username, password: body.password, event });
+  const result = await authenticateUser({ username: body.username, password: body.password, event, rememberMe: body.rememberMe === true });
   if (!result.ok) {
     const usernameLimit = await checkRateLimit({
       key: `login-failed-username:${String(body.username || "").trim().toLowerCase()}`,
@@ -111,7 +119,8 @@ async function handleAuthLogin(event) {
     expiresAt: result.session.expiresAt,
     absoluteExpiresAt: result.session.absoluteExpiresAt,
     csrfToken: csrfTokenForSession(result.session),
-    authRequired: true
+    authRequired: true,
+    config: safeClientConfig()
   }, {
     "Set-Cookie": result.cookie
   });
@@ -141,7 +150,8 @@ async function handleAuthMe(event) {
     expiresAt: auth.session.expiresAt,
     absoluteExpiresAt: auth.session.absoluteExpiresAt,
     csrfToken: csrfTokenForSession(auth.session),
-    authRequired: true
+    authRequired: true,
+    config: safeClientConfig()
   });
 }
 

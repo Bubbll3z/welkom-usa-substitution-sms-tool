@@ -7,6 +7,7 @@ const SESSION_STORE_NAME = "welkom-sms-sessions";
 const SESSION_COOKIE = "welkom_sms_session";
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const ABSOLUTE_TIMEOUT_MS = 8 * 60 * 60 * 1000;
+const REMEMBERED_ABSOLUTE_TIMEOUT_MS = Number(process.env.REMEMBER_ME_DAYS || 14) * 24 * 60 * 60 * 1000;
 const LAST_SEEN_REFRESH_MS = 5 * 60 * 1000;
 const LOCKOUT_MS = 15 * 60 * 1000;
 const MAX_FAILED_ATTEMPTS = 5;
@@ -294,7 +295,13 @@ function parseCookies(header) {
     }, {});
 }
 
-async function createSession({ user, event, env = process.env, now = Date.now() }) {
+function rememberedAbsoluteTimeout(env = process.env) {
+  const days = Math.min(Math.max(Number(env.REMEMBER_ME_DAYS || 14), 1), 30);
+  return days * 24 * 60 * 60 * 1000;
+}
+
+async function createSession({ user, event, env = process.env, now = Date.now(), rememberMe = false }) {
+  const absoluteTimeout = rememberMe ? rememberedAbsoluteTimeout(env) : ABSOLUTE_TIMEOUT_MS;
   const sessionId = crypto.randomBytes(32).toString("base64url");
   const session = {
     sessionIdHash: hashSessionId(sessionId),
@@ -303,7 +310,8 @@ async function createSession({ user, event, env = process.env, now = Date.now() 
     createdAt: nowIso(now),
     lastSeenAt: nowIso(now),
     expiresAt: nowIso(now + IDLE_TIMEOUT_MS),
-    absoluteExpiresAt: nowIso(now + ABSOLUTE_TIMEOUT_MS),
+    absoluteExpiresAt: nowIso(now + absoluteTimeout),
+    remembered: Boolean(rememberMe),
     revokedAt: null
   };
   await setJson(store("sessions", env), `sessions/${session.sessionIdHash}`, session);
@@ -406,12 +414,12 @@ async function delayForFailures(count) {
   if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
-async function authenticateUser({ username, password, event, env = process.env, now = Date.now() }) {
+async function authenticateUser({ username, password, event, env = process.env, now = Date.now(), rememberMe = false }) {
   const generic = { ok: false, status: 401, code: "AUTH_REQUIRED", error: "Invalid username or password." };
   const normalized = normalizeUsername(username);
   const user = await getUserByUsername(normalized, env);
   if (!user) {
-    const bootstrap = await tryBootstrapAdminLogin({ username: normalized, password, event, env, now });
+    const bootstrap = await tryBootstrapAdminLogin({ username: normalized, password, event, env, now, rememberMe });
     if (bootstrap) return bootstrap;
     await delayForFailures(2);
     await recordSecurityEvent("login_failed", { username: normalized || "[missing]", reason: "generic" }, env);
@@ -436,7 +444,7 @@ async function authenticateUser({ username, password, event, env = process.env, 
     return generic;
   }
   const saved = await saveUser({ ...user, failedLoginCount: 0, lockedUntil: null, lastLoginAt: nowIso(now) }, env);
-  const session = await createSession({ user: saved, event, env, now });
+  const session = await createSession({ user: saved, event, env, now, rememberMe });
   await recordSecurityEvent("login_success", { userId: saved.id, username: saved.username }, env);
   return {
     ok: true,
@@ -446,7 +454,7 @@ async function authenticateUser({ username, password, event, env = process.env, 
   };
 }
 
-async function tryBootstrapAdminLogin({ username, password, event, env = process.env, now = Date.now() }) {
+async function tryBootstrapAdminLogin({ username, password, event, env = process.env, now = Date.now(), rememberMe = false }) {
   const enabled = String(env.ADMIN_BOOTSTRAP_ENABLED || "").toLowerCase() === "true";
   const bootstrapUsername = normalizeUsername(env.ADMIN_BOOTSTRAP_USERNAME);
   const bootstrapPassword = String(env.ADMIN_BOOTSTRAP_PASSWORD || "");
@@ -470,7 +478,7 @@ async function tryBootstrapAdminLogin({ username, password, event, env = process
 
   const rawUser = await getUserByUsername(bootstrapUsername, env);
   const saved = await saveUser({ ...rawUser, failedLoginCount: 0, lockedUntil: null, lastLoginAt: nowIso(now) }, env);
-  const session = await createSession({ user: saved, event, env, now });
+  const session = await createSession({ user: saved, event, env, now, rememberMe });
   await recordSecurityEvent("bootstrap_admin_created", { userId: saved.id, username: saved.username }, env);
   await recordSecurityEvent("login_success", { userId: saved.id, username: saved.username }, env);
   return {
@@ -538,6 +546,7 @@ module.exports = {
   IDLE_TIMEOUT_MS,
   LOCKOUT_MS,
   MAX_FAILED_ATTEMPTS,
+  REMEMBERED_ABSOLUTE_TIMEOUT_MS,
   SESSION_COOKIE,
   SESSION_STORE_NAME,
   USER_STORE_NAME,
@@ -564,6 +573,7 @@ module.exports = {
   recordSecurityEvent,
   requireAuth,
   requireRole,
+  rememberedAbsoluteTimeout,
   resetAuthStoreFactory,
   resetLoginAttempts,
   resetUserPassword,
