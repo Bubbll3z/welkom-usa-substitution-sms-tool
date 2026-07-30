@@ -20,6 +20,7 @@ const {
   validateString
 } = require("../../src/validation");
 const {
+  handleAdminCreateUser,
   handleAuthLogin,
   handleAuthLogout,
   handleAuthMe
@@ -29,6 +30,7 @@ const {
   getOrderById,
   getVariantById,
   hasConfig,
+  searchOrders,
   searchProductsForSubstitutions,
   searchSubstitutionsForLineItem
 } = require("../../src/shopify");
@@ -268,6 +270,10 @@ async function handleSession(event) {
   return handleAuthMe(event);
 }
 
+async function handleAdminCreateStaff(event) {
+  return handleAdminCreateUser(event);
+}
+
 function publicBaseUrl(event) {
   const configured = String(process.env.PUBLIC_APP_URL || process.env.URL || "").replace(/\/$/, "");
   if (configured) return configured;
@@ -342,6 +348,21 @@ async function handleOrderSearch(event) {
   return json(result.status, result.body);
 }
 
+async function handleShopifySearchOrders(event) {
+  const auth = await requireSession(event);
+  if (auth.error) return auth.error;
+  const limited = await rateLimit(`order-search:session:${auth.session.session.sessionIdHash}`, 30, 60);
+  if (limited) return limited;
+
+  const params = new URLSearchParams(event.rawQuery || "");
+  const query = validateString(params.get("query") || "", { min: 1, max: 80, pattern: /^#?[A-Za-z0-9-+().\s]+$/ });
+  if (!query.ok) return invalidRequest();
+
+  const result = await searchOrders(query.value, { limit: 10 });
+  if (!result.body.success) return json(result.status, result.body);
+  return json(200, { success: true, data: { orders: result.body.orders }, orders: result.body.orders });
+}
+
 async function handleProductSearch(event) {
   if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
   const auth = await requireSession(event);
@@ -364,6 +385,21 @@ async function handleProductSearch(event) {
     excludeVariantId: body.excludeVariantId
   });
   return json(200, { success: true, products });
+}
+
+async function handleShopifySearchProducts(event) {
+  const auth = await requireSession(event);
+  if (auth.error) return auth.error;
+  const limited = await rateLimit(`product-search:session:${auth.session.session.sessionIdHash}`, 60, 60);
+  if (limited) return limited;
+
+  const params = new URLSearchParams(event.rawQuery || "");
+  const search = cleanString(params.get("search") || params.get("query") || "", 120);
+  const limit = Math.min(Math.max(Number(params.get("limit") || 10), 1), 25);
+  if (!search) return error(400, "INVALID_REQUEST", "Product search is required.");
+  if (!hasConfig()) return error(500, "SHOPIFY_ERROR", "Shopify Admin API is not configured.");
+  const products = await searchProductsForSubstitutions(search, { limit });
+  return json(200, { success: true, data: { products }, products });
 }
 
 async function handleLineItemSubstitutions(event) {
@@ -929,6 +965,47 @@ async function handleSendReplacementSms(event) {
   return json(smsResult.status, { ...smsResult.body, staffCopy, record: publicRecord(updatedRecord || created.record) });
 }
 
+async function handleTwilioSendCustom(event) {
+  if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
+  const body = parseBody(event);
+  if (!body) return error(400, "INVALID_REQUEST", "Request body must be valid JSON.");
+  const mode = String(body.mode || "manual").toLowerCase();
+  if (mode !== "manual") {
+    return error(400, "UNSUPPORTED_MODE", "Custom Shopify-customer SMS must be sent through the reviewed order workflow.");
+  }
+  const personalization = body.personalization && typeof body.personalization === "object" ? body.personalization : {};
+  let finalBody = String(body.body || body.message || "").trim();
+  for (const [key, value] of Object.entries(personalization)) {
+    finalBody = finalBody.split(`[${String(key).toUpperCase()}]`).join(cleanText(value, 80));
+  }
+  const nextEvent = {
+    ...event,
+    body: JSON.stringify({
+      phone: body.manualPhone || body.phone,
+      firstName: personalization.firstName || personalization.FIRST_NAME || "",
+      reference: personalization.reference || body.shopifyCustomerId || "custom-message",
+      unavailableItem: personalization.unavailableItem || "requested item",
+      substituteItem: personalization.substituteItem || "an available substitute",
+      message: finalBody,
+      consentConfirmed: body.consentConfirmed === true,
+      sendConfirmed: true,
+      authorizedResend: body.authorizedResend === true,
+      idempotencyKey: body.idempotencyKey || `custom:${body.manualPhone || body.phone || ""}:${finalBody}`
+    })
+  };
+  const response = await handleSendManualSms(nextEvent);
+  const payload = JSON.parse(response.body || "{}");
+  return json(response.statusCode, {
+    success: payload.success !== false,
+    data: payload.success === false ? undefined : {
+      messageId: payload.record?.id || payload.sid,
+      status: payload.providerStatus || "sent",
+      segmentCount: payload.segments
+    },
+    ...payload
+  });
+}
+
 async function handleHistory(event) {
   const auth = await requireSession(event);
   if (auth.error) return auth.error;
@@ -1019,6 +1096,18 @@ async function handleConfigDiagnostics(event) {
   const auth = await requireSession(event);
   if (auth.error) return auth.error;
   return json(200, { success: true, diagnostics: safeConfigDiagnostics(event) });
+}
+
+async function handleSettings(event) {
+  const auth = await requireSession(event);
+  if (auth.error) return auth.error;
+  return json(200, {
+    success: true,
+    data: {
+      status: safeConfigStatus(),
+      diagnostics: safeConfigDiagnostics(event)
+    }
+  });
 }
 
 function findOrderLineItem(order, lineItemId) {
@@ -1191,6 +1280,57 @@ async function handleCreateSubstitutionRequest(event) {
   return createAndSendCustomerRequest({ event, body, auth });
 }
 
+function normalizeRequestItem(item) {
+  const substitutes = Array.isArray(item?.substitutes) ? item.substitutes : [];
+  const substituteVariantIds = (item?.substituteVariantIds || substitutes.map((substitute) => substitute?.variantId || substitute?.id || substitute?.productId || ""))
+    .map((id) => String(id || "").trim())
+    .filter(Boolean)
+    .slice(0, 3);
+  return {
+    lineItemId: item?.lineItemId || item?.originalLineItemId || "",
+    originalLineItemId: item?.lineItemId || item?.originalLineItemId || "",
+    quantity: item?.quantity,
+    staffNote: cleanText(item?.staffNote || item?.note || "", 240),
+    substituteVariantIds
+  };
+}
+
+async function handleTwilioSendSubstitution(event) {
+  if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
+  const auth = await requireSession(event);
+  if (auth.error) return auth.error;
+  const body = parseBody(event);
+  if (!body) return error(400, "INVALID_REQUEST", "Request body must be valid JSON.");
+  const mode = String(body.mode || "shopify").toLowerCase();
+  if (mode !== "shopify") {
+    return error(400, "UNSUPPORTED_MODE", "Secure substitution links require a Shopify order. Use custom SMS for manual phone numbers.");
+  }
+  const normalized = {
+    orderId: body.orderId,
+    items: Array.isArray(body.items) ? body.items.map(normalizeRequestItem) : [],
+    expiryHours: Number(body.linkExpiryHours || body.expiryHours || 48),
+    staffNote: cleanText(body.note || body.staffNote || "", 240),
+    sendConfirmed: true,
+    idempotencyKey: body.idempotencyKey || `request:${body.orderId || ""}:${JSON.stringify(body.items || []).slice(0, 500)}`
+  };
+  if (!validateGid(normalized.orderId, "Order").ok) return invalidRequest();
+  if (!normalized.items.length) return error(400, "INVALID_REQUEST", "Select at least one unavailable item.");
+  const response = await createAndSendCustomerRequest({ event, body: normalized, auth });
+  if (response.statusCode >= 400) return response;
+  const payload = JSON.parse(response.body || "{}");
+  return json(response.statusCode, {
+    success: true,
+    data: {
+      messageId: payload.messageRecordId,
+      status: payload.providerStatus || payload.status || "sent",
+      segmentCount: payload.segments,
+      secureLink: payload.publicUrl,
+      request: payload.request
+    },
+    ...payload
+  });
+}
+
 async function handleListSubstitutionRequests(event) {
   const auth = await requireSession(event);
   if (auth.error) return auth.error;
@@ -1354,6 +1494,35 @@ async function handleTemplateArchive(event, route) {
   return json(200, { success: true, template: result.template });
 }
 
+async function handleTemplateById(event, route) {
+  const auth = await requireRole(event, "admin");
+  if (!auth.ok) return error(auth.status || 403, auth.code || "FORBIDDEN", auth.error || "You do not have permission to perform this action.");
+  const id = decodeURIComponent(route.replace(/^templates\//, ""));
+  if (event.httpMethod === "DELETE") {
+    let result;
+    try {
+      result = await archiveTemplate(id);
+    } catch (storageError) {
+      logger.error("Template delete error", { error: storageError.message });
+      return error(500, "STORAGE_ERROR", `Template could not be deleted: ${safeErrorDetail(storageError)}`);
+    }
+    if (!result.ok) return error(400, result.code, result.error);
+    return json(200, { success: true, template: result.template });
+  }
+  if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
+  const body = parseBody(event);
+  if (!body) return error(400, "INVALID_REQUEST", "Request body must be valid JSON.");
+  let result;
+  try {
+    result = await saveTemplate({ ...body, id });
+  } catch (storageError) {
+    logger.error("Template update error", { error: storageError.message });
+    return error(500, "STORAGE_ERROR", `Template could not be saved: ${safeErrorDetail(storageError)}`);
+  }
+  if (!result.ok) return error(400, result.code, result.error);
+  return json(200, { success: true, template: result.template });
+}
+
 async function handleBackup(event, route) {
   const auth = await requireSession(event);
   if (auth.error) return auth.error;
@@ -1447,6 +1616,26 @@ async function handleReplyAction(event, route) {
   const result = action === "read" ? await markReplyRead(id) : await markReplyReviewed(id, auth.session.staffName);
   if (!result.ok) return error(result.code === "NOT_FOUND" ? 404 : 400, result.code, result.error);
   return json(200, { success: true, reply: result.reply });
+}
+
+async function handleReplyResolve(event, route) {
+  if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
+  const auth = await requireSession(event);
+  if (auth.error) return auth.error;
+  const match = route.match(/^replies\/([^/]+)\/resolve$/);
+  if (!match) return error(404, "NOT_FOUND", "Reply was not found.");
+  const body = parseBody(event);
+  if (!body) return error(400, "INVALID_REQUEST", "Request body must be valid JSON.");
+  const action = validateEnum(body.action, ["confirm", "alternatives", "refund"]);
+  if (!action.ok) return invalidRequest();
+  const result = await markReplyReviewed(match[1], auth.session.staffName);
+  if (!result.ok) return error(result.code === "NOT_FOUND" ? 404 : 400, result.code, result.error);
+  await createAuditRecord({
+    type: "reply_resolved",
+    actor: auth.session.staffName,
+    details: { replyId: match[1], action: action.value, staffNote: cleanText(body.staffNote || "", 240) }
+  }).catch(() => {});
+  return json(200, { success: true, data: { reply: result.reply }, reply: result.reply });
 }
 
 async function handleTwilioStatus(event) {
@@ -1562,10 +1751,14 @@ exports.handler = async (event) => {
   if ((route === "public/substitution-request" || route.startsWith("public/substitution-request/")) && event.httpMethod === "GET") return handlePublicRequest(event);
   if (route === "public/substitution-response" && event.httpMethod === "POST") return handlePublicSubmit(event);
   if (route === "session" && event.httpMethod === "GET") return handleSession(event);
+  if (route === "auth-me" && event.httpMethod === "GET") return handleSession(event);
   if (route === "dashboard" && event.httpMethod === "GET") return handleDashboard(event);
+  if (route === "settings" && event.httpMethod === "GET") return handleSettings(event);
   if (route === "config-diagnostics" && event.httpMethod === "GET") return handleConfigDiagnostics(event);
   if (route === "replies" && event.httpMethod === "GET") return handleReplies(event);
   if (/^replies\/[^/]+$/.test(route) && event.httpMethod === "GET") return handleReplyRecord(event, route);
+  if (/^replies\/[^/]+\/resolve$/.test(route) && event.httpMethod === "POST") return handleReplyResolve(event, route);
+  if (route === "history" && event.httpMethod === "GET") return handleHistory(event);
   if (route === "message-history" && event.httpMethod === "GET") return handleHistory(event);
   if (route.startsWith("message-history/") && event.httpMethod === "GET") return handleHistoryRecord(event, route);
   if (route === "substitution-requests" && event.httpMethod === "GET") return handleListSubstitutionRequests(event);
@@ -1576,10 +1769,19 @@ exports.handler = async (event) => {
 
   if (route === "login") return handleLogin(event);
   if (route === "logout") return handleLogout(event);
+  if (route === "auth-login") return handleLogin(event);
+  if (route === "auth-logout") return handleLogout(event);
+  if (route === "admin-create-staff") return handleAdminCreateStaff(event);
+  if (route === "admin-init-blobs") return handleInitializeBlobs(event, blobConnection);
   if (route === "admin/init-blobs") return handleInitializeBlobs(event, blobConnection);
   if (route === "admin/cleanup") return handleAdminCleanup(event);
   if (route === "templates") return handleTemplates(event);
+  if (/^templates\/[^/]+$/.test(route)) return handleTemplateById(event, route);
   if (/^templates\/.+\/archive$/.test(route)) return handleTemplateArchive(event, route);
+  if (route === "shopify-search-orders") return handleShopifySearchOrders(event);
+  if (route === "shopify-search-products") return handleShopifySearchProducts(event);
+  if (route === "twilio-send-substitution") return handleTwilioSendSubstitution(event);
+  if (route === "twilio-send-custom") return handleTwilioSendCustom(event);
   if (route === "order-search") return handleOrderSearch(event);
   if (route === "product-search") return handleProductSearch(event);
   if (route === "line-item-substitutions") return handleLineItemSubstitutions(event);

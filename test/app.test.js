@@ -688,6 +688,35 @@ test("API order search and selected-line-item substitutions require session", as
   }
 });
 
+test("compatibility API aliases support the React backend contract", async () => {
+  const cookie = await loginCookie();
+  const originalFetch = global.fetch;
+  global.fetch = mockFetch();
+  try {
+    const me = await handler(event("/api/auth-me", undefined, { cookie }, "GET"));
+    assert.equal(me.statusCode, 200);
+    assert.equal(JSON.parse(me.body).user.username, "admin");
+
+    const orders = await handler(event("/api/shopify-search-orders?query=1023", undefined, { cookie }, "GET"));
+    assert.equal(orders.statusCode, 200);
+    assert.equal(JSON.parse(orders.body).orders[0].name, "#1023");
+
+    const products = await handler(event("/api/shopify-search-products?search=flake&limit=5", undefined, { cookie }, "GET"));
+    assert.equal(products.statusCode, 200);
+    assert.equal(JSON.parse(products.body).products.length, 1);
+
+    const history = await handler(event("/api/history?limit=5", undefined, { cookie }, "GET"));
+    assert.equal(history.statusCode, 200);
+    assert.equal(JSON.parse(history.body).success, true);
+
+    const settings = await handler(event("/api/settings", undefined, { cookie }, "GET"));
+    assert.equal(settings.statusCode, 200);
+    assert.equal(JSON.parse(settings.body).data.status.shopifyConfigured, true);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("manual product search reports missing Shopify configuration", async () => {
   const cookie = await loginCookie();
   delete process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;

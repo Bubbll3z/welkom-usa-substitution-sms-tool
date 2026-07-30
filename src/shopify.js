@@ -393,6 +393,69 @@ async function findOrder(queryText, { env = process.env, fetchImpl = fetch } = {
   };
 }
 
+async function searchOrders(queryText, { env = process.env, fetchImpl = fetch, limit = 10 } = {}) {
+  if (!hasConfig(env)) {
+    return { status: 500, body: { success: false, code: "SHOPIFY_ERROR", error: "Shopify Admin API is not configured." } };
+  }
+
+  const raw = String(queryText || "").trim();
+  if (!raw) {
+    return { status: 400, body: { success: false, code: "INVALID_ORDER", error: "Order search is required." } };
+  }
+
+  if (raw.length > 80) {
+    return { status: 400, body: { success: false, code: "INVALID_ORDER", error: "Order search is invalid." } };
+  }
+
+  const cappedLimit = Math.max(1, Math.min(Number(limit) || 10, 10));
+  const normalized = normalizeOrderQuery(raw).replace(/[^\w-]/g, "");
+  const compactPhone = raw.replace(/[^\d+]/g, "");
+  const safeRaw = escapeSearchTerm(raw);
+  const attempts = [];
+
+  if (normalized && /^[A-Za-z0-9-]+$/.test(normalized)) {
+    attempts.push(`name:${escapeSearchTerm(expectedOrderName(normalized))}`);
+  }
+  if (compactPhone.length >= 7) {
+    attempts.push(`phone:${escapeSearchTerm(compactPhone)}`);
+  }
+  attempts.push(safeRaw);
+
+  const query = `
+    query SearchOrders($query: String!, $first: Int!) {
+      orders(first: $first, query: $query, sortKey: PROCESSED_AT, reverse: true) {
+        nodes { ${ORDER_FIELDS} }
+      }
+    }
+  `;
+
+  const orders = [];
+  const seen = new Set();
+  let hadShopifyError = false;
+
+  for (const orderQuery of [...new Set(attempts.filter(Boolean))]) {
+    const result = await shopifyGraphql(query, { query: orderQuery, first: cappedLimit }, { env, fetchImpl });
+    if (!result.ok) {
+      hadShopifyError = true;
+      continue;
+    }
+
+    for (const order of result.json.data?.orders?.nodes || []) {
+      if (!order?.id || seen.has(order.id)) continue;
+      seen.add(order.id);
+      orders.push(simplifyOrder(order, [], { browserSafe: true }));
+      if (orders.length >= cappedLimit) break;
+    }
+    if (orders.length >= cappedLimit) break;
+  }
+
+  if (!orders.length && hadShopifyError) {
+    return { status: 502, body: { success: false, code: "SHOPIFY_ERROR", error: "Shopify order search failed." } };
+  }
+
+  return { status: 200, body: { success: true, orders } };
+}
+
 async function getOrderById(orderId, { env = process.env, fetchImpl = fetch } = {}) {
   if (!hasConfig(env)) {
     return { status: 500, body: { success: false, code: "SHOPIFY_ERROR", error: "Shopify Admin API is not configured." } };
@@ -465,6 +528,7 @@ module.exports = {
   hasConfig,
   maskEmail,
   normalizeOrderQuery,
+  searchOrders,
   searchProductsForSubstitutions,
   searchSubstitutionsForLineItem
 };
