@@ -275,6 +275,34 @@ test("temporary no-login mode no longer bypasses server authentication", async (
   assert.equal(dashboard.statusCode, 401);
 });
 
+test("temporary bootstrap login creates first admin user without exposing password", async () => {
+  clearAuthMemory();
+  process.env.ADMIN_BOOTSTRAP_ENABLED = "true";
+  process.env.ADMIN_BOOTSTRAP_USERNAME = "manager";
+  process.env.ADMIN_BOOTSTRAP_DISPLAY_NAME = "Manager";
+  process.env.ADMIN_BOOTSTRAP_PASSWORD = "bootstrap-pass-123";
+
+  const response = await authLoginHandler(event("/.netlify/functions/auth-login", { username: "manager", password: "bootstrap-pass-123" }, { "x-forwarded-proto": "https" }));
+  assert.equal(response.statusCode, 200);
+  assert.match(response.headers["Set-Cookie"], /HttpOnly/);
+  assert.doesNotMatch(response.body, /bootstrap-pass-123|passwordHash|passwordSalt/);
+
+  const body = JSON.parse(response.body);
+  assert.equal(body.user.username, "manager");
+  assert.equal(body.user.displayName, "Manager");
+  assert.equal(body.user.role, "admin");
+
+  const saved = await getUserByUsername("manager");
+  assert.equal(saved.role, "admin");
+  assert.ok(saved.passwordHash);
+  assert.notEqual(saved.passwordHash, "bootstrap-pass-123");
+
+  delete process.env.ADMIN_BOOTSTRAP_ENABLED;
+  delete process.env.ADMIN_BOOTSTRAP_USERNAME;
+  delete process.env.ADMIN_BOOTSTRAP_DISPLAY_NAME;
+  delete process.env.ADMIN_BOOTSTRAP_PASSWORD;
+});
+
 test("auth functions protect passwords, disabled users, lockout, roles and cookie flags", async () => {
   const unknown = await authLoginHandler(event("/.netlify/functions/auth-login", { username: "missing", password: "whatever123" }));
   assert.equal(unknown.statusCode, 401);

@@ -307,6 +307,17 @@ ADMIN_USERNAME=manager ADMIN_DISPLAY_NAME="Manager" ADMIN_PASSWORD="use-a-long-r
 
 Do not add `ADMIN_PASSWORD` to `.env`, GitHub, Netlify environment variables, screenshots, or chat.
 
+For deployed Netlify setup, if you cannot run the local script against the deployed Blob store yet, use the temporary bootstrap login:
+
+```text
+ADMIN_BOOTSTRAP_ENABLED=true
+ADMIN_BOOTSTRAP_USERNAME=manager
+ADMIN_BOOTSTRAP_DISPLAY_NAME=Manager
+ADMIN_BOOTSTRAP_PASSWORD=use-a-long-random-password
+```
+
+Redeploy, then log in once with that username and password. The app creates a real admin user in `welkom-sms-users` with a scrypt password hash. After the first successful login, remove these `ADMIN_BOOTSTRAP_*` variables or set `ADMIN_BOOTSTRAP_ENABLED=false`, then redeploy again. Do not leave bootstrap enabled permanently.
+
 Login behavior:
 
 - 30-minute idle timeout
