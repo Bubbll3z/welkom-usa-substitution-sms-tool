@@ -10,6 +10,7 @@
     appStatus: document.getElementById("appStatus"),
     staffHeader: document.getElementById("staffHeader"),
     staffGreeting: document.getElementById("staffGreeting"),
+    staffAvatar: document.getElementById("staffAvatar"),
     quickNav: document.getElementById("quickNav"),
     logoutButton: document.getElementById("logoutButton"),
     main: document.getElementById("main"),
@@ -162,6 +163,25 @@
         ["circle", { cx: "12", cy: "12", r: "10" }],
         ["path", { d: "M12 8v5" }],
         ["path", { d: "M12 16h.01" }]
+      ],
+      messageSquare: [
+        ["path", { d: "M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" }]
+      ],
+      inbox: [
+        ["path", { d: "M22 12h-6l-2 3h-4l-2-3H2" }],
+        ["path", { d: "M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.7 4H7.3a2 2 0 0 0-1.8 1.1z" }]
+      ],
+      history: [
+        ["path", { d: "M3 12a9 9 0 1 0 3-6.7" }],
+        ["path", { d: "M3 3v6h6" }],
+        ["path", { d: "M12 7v5l3 2" }]
+      ],
+      penLine: [
+        ["path", { d: "M12 20h9" }],
+        ["path", { d: "M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" }]
+      ],
+      chevronRight: [
+        ["path", { d: "m9 18 6-6-6-6" }]
       ]
     };
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -305,7 +325,9 @@
     const config = routes[state.route] || routes["/menu"];
     document.title = `${config.title} - Welkom USA SMS`;
     els.staffHeader.classList.toggle("hidden", !state.auth || state.route === "/login" || state.route === "/respond");
-    els.staffGreeting.textContent = state.auth ? `Signed in as ${state.auth.displayName || state.auth.username}` : "Staff workspace";
+    const staffName = state.auth ? staffDisplayName() : "Staff";
+    els.staffGreeting.textContent = state.auth ? staffName : "Staff workspace";
+    if (els.staffAvatar) els.staffAvatar.textContent = initials(staffName);
     renderQuickNav();
     clear(els.main);
     els.main.append(config.render());
@@ -314,26 +336,6 @@
 
   function renderQuickNav() {
     clear(els.quickNav);
-    if (!state.auth) return;
-    const staffLinks = [
-      ["/menu", "Menu"],
-      ["/substitution/order", "Substitution"],
-      ["/replies", "Replies"],
-      ["/history", "History"],
-      ["/custom-message", "Custom"]
-    ];
-    const adminLinks = [
-      ["/admin/dashboard", "Admin"],
-      ["/admin/templates", "Templates"],
-      ["/admin/settings", "Settings"],
-      ["/admin/users", "Users"],
-      ["/admin/backup", "Backup"]
-    ];
-    const links = state.auth.role === "admin" ? [...staffLinks, ...adminLinks] : staffLinks;
-    links.forEach(([path, label]) => {
-      const node = button(label, state.route === path ? "nav active" : "nav", () => go(path));
-      els.quickNav.append(node);
-    });
   }
 
   async function checkSession() {
@@ -473,14 +475,49 @@
   }
 
   function renderStaffMenu() {
+    const staffName = staffDisplayName();
     const tiles = [
       ["/substitution/order", "Send Substitution SMS", "Find an order, choose unavailable items and send replacement options.", "message-square"],
       ["/replies", "View Replies", "Review customer SMS replies that need attention.", "inbox"],
       ["/history", "Message History", "View sent messages and copy or resend an approved message.", "history"],
       ["/custom-message", "Custom Message", "Find a customer or enter an approved number and write a custom message.", "edit"]
     ];
-    return page("Main Menu", "Choose what you need to do today.", [
-      h("div", { class: "tile-grid" }, tiles.map(([path, title, copy, icon]) => menuTile(path, title, copy, icon))),
+    const pendingValue = h("strong", { text: "..." });
+    const sentValue = h("strong", { text: "..." });
+    const modeValue = h("strong", { text: state.config?.dryRun ? "Dry run" : "Live" });
+    const loadStats = async () => {
+      try {
+        const [dashboard, replies] = await Promise.all([
+          api("/api/dashboard"),
+          api("/api/replies?status=unread&limit=1")
+        ]);
+        const pending = Number(replies.total || 0);
+        pendingValue.textContent = String(pending);
+        sentValue.textContent = String(dashboard.stats?.sentToday || 0);
+        pendingValue.closest(".menu-stat")?.classList.toggle("urgent", pending > 0);
+        document.querySelector(".menu-unread-dot")?.classList.toggle("hidden", pending <= 0);
+      } catch (error) {
+        pendingValue.textContent = "-";
+        sentValue.textContent = "-";
+        document.querySelector(".menu-unread-dot")?.classList.add("hidden");
+      }
+    };
+    setTimeout(loadStats, 0);
+    return h("section", { class: "menu-page" }, [
+      h("div", { class: "menu-heading" }, [
+        h("h1", { text: "Main Menu" }),
+        h("p", {}, [
+          document.createTextNode("Choose what you need to do today. Signed in as "),
+          h("strong", { text: staffName }),
+          document.createTextNode(".")
+        ])
+      ]),
+      h("div", { class: "menu-stats" }, [
+        h("div", { class: "menu-stat" }, [h("span", { text: "Pending Replies" }), pendingValue]),
+        h("div", { class: "menu-stat" }, [h("span", { text: "Messages Sent Today" }), sentValue]),
+        h("div", { class: "menu-stat" }, [h("span", { text: "Sending Mode" }), modeValue])
+      ]),
+      h("div", { class: "menu-card-list" }, tiles.map(([path, title, copy, iconName]) => menuTile(path, title, copy, iconName))),
       state.auth?.role === "admin" ? card("Administrator tools", [
         h("p", { class: "muted", text: "You can also open the administrator area for settings, templates, backups and users." }),
         button("Open Admin Overview", "secondary", () => go("/admin/dashboard"))
@@ -488,12 +525,28 @@
     ]);
   }
 
-  function menuTile(path, title, copy, icon) {
+  function menuTile(path, title, copy, iconName) {
+    const normalizedIcon = iconName === "edit" ? "penLine" : iconName === "message-square" ? "messageSquare" : iconName;
     return h("button", { type: "button", class: "menu-tile", onClick: () => go(path) }, [
-      h("span", { class: `tile-icon ${icon}`, "aria-hidden": "true" }),
-      h("strong", { text: title }),
-      h("span", { text: copy })
+      h("span", { class: "menu-tile-icon" }, [
+        icon(normalizedIcon, { class: "menu-icon" }),
+        path === "/replies" ? h("span", { class: "menu-unread-dot hidden", "aria-hidden": "true" }) : null
+      ]),
+      h("span", { class: "menu-tile-copy" }, [
+        h("strong", { text: title }),
+        h("span", { text: copy })
+      ]),
+      icon("chevronRight", { class: "menu-chevron" })
     ]);
+  }
+
+  function staffDisplayName() {
+    return state.auth?.displayName || state.auth?.username || "Staff";
+  }
+
+  function initials(value) {
+    const parts = String(value || "Staff").trim().split(/\s+/).filter(Boolean);
+    return (parts.length > 1 ? `${parts[0][0]}${parts[1][0]}` : parts[0]?.slice(0, 2) || "ST").toUpperCase();
   }
 
   function progress(current) {

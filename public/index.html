@@ -17,17 +17,21 @@
 
   <div id="app" class="app-shell">
     <header id="staffHeader" class="staff-header hidden">
-      <div>
-        <div class="brand-row">
-          <div class="brand-mark">WE</div>
-          <div>
-            <strong>Welkom USA SMS</strong>
-            <span id="staffGreeting">Staff workspace</span>
-          </div>
+      <div class="brand-row">
+        <div class="brand-mark">WE</div>
+        <div>
+          <strong>Welkom USA SMS</strong>
+          <span>Warehouse messaging</span>
         </div>
       </div>
       <nav id="quickNav" class="quick-nav" aria-label="Quick navigation"></nav>
-      <button id="logoutButton" class="btn secondary" type="button">Logout</button>
+      <div class="user-menu">
+        <button class="user-menu-button" type="button" aria-label="Staff account">
+          <span id="staffAvatar" class="staff-avatar">WA</span>
+          <span id="staffGreeting">Staff workspace</span>
+        </button>
+        <button id="logoutButton" class="logout-link" type="button">Logout</button>
+      </div>
     </header>
 
     <main id="main" class="main" tabindex="-1"></main>
