@@ -164,13 +164,20 @@ async function verifyPassword(password, user) {
   return timingSafeEqualHex(derived.toString("hex"), user.passwordHash);
 }
 
+function normalizeRole(role) {
+  const clean = String(role || "staff").trim().toLowerCase();
+  if (["admin", "administrator", "manager", "owner"].includes(clean)) return "admin";
+  if (["staff", "user", "warehouse"].includes(clean)) return "staff";
+  return clean;
+}
+
 function sanitizeUser(user) {
   if (!user) return null;
   return {
     id: user.id,
     username: user.username,
     displayName: user.displayName,
-    role: user.role,
+    role: normalizeRole(user.role),
     isActive: Boolean(user.isActive),
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
@@ -198,6 +205,7 @@ async function saveUser(user, env = process.env) {
   const record = {
     ...user,
     username: normalized,
+    role: normalizeRole(user.role),
     updatedAt: nowIso()
   };
   const targetStore = store("users", env);
@@ -208,8 +216,9 @@ async function saveUser(user, env = process.env) {
 
 async function createUser({ username, displayName, password, role = "staff", isActive = true }, env = process.env) {
   const normalized = normalizeUsername(username);
+  const normalizedRole = normalizeRole(role);
   if (!validateUsername(normalized)) return { ok: false, status: 400, code: "USER_INVALID", error: "Username is invalid." };
-  if (!["admin", "staff"].includes(role)) return { ok: false, status: 400, code: "ROLE_INVALID", error: "Role must be admin or staff." };
+  if (!["admin", "staff"].includes(normalizedRole)) return { ok: false, status: 400, code: "ROLE_INVALID", error: "Role must be admin or staff." };
   const existing = await getUserByUsername(normalized, env);
   if (existing) return { ok: false, status: 409, code: "USER_EXISTS", error: "User already exists." };
   const hashed = await hashPassword(password);
@@ -221,7 +230,7 @@ async function createUser({ username, displayName, password, role = "staff", isA
     displayName: String(displayName || username || "").trim().slice(0, 120) || normalized,
     passwordHash: hashed.passwordHash,
     passwordSalt: hashed.passwordSalt,
-    role,
+    role: normalizedRole,
     isActive: Boolean(isActive),
     createdAt: now,
     updatedAt: now,
@@ -306,7 +315,7 @@ async function createSession({ user, event, env = process.env, now = Date.now(),
   const session = {
     sessionIdHash: hashSessionId(sessionId),
     userId: user.id,
-    role: user.role,
+    role: normalizeRole(user.role),
     createdAt: nowIso(now),
     lastSeenAt: nowIso(now),
     expiresAt: nowIso(now + IDLE_TIMEOUT_MS),
@@ -352,11 +361,11 @@ async function getSession(event, env = process.env, now = Date.now()) {
     session: nextSession,
     user: sanitizeUser(user),
     staffName: user.displayName,
-    role: user.role,
+    role: normalizeRole(user.role),
     payload: {
       staffName: user.displayName,
       exp: new Date(nextSession.expiresAt).getTime(),
-      role: user.role,
+      role: normalizeRole(user.role),
       userId: user.id
     }
   };
@@ -384,8 +393,8 @@ async function requireAuth(event, env = process.env) {
 async function requireRole(event, role, env = process.env) {
   const auth = await requireAuth(event, env);
   if (!auth.ok) return auth;
-  const allowed = Array.isArray(role) ? role : [role];
-  if (!allowed.includes(auth.role)) {
+  const allowed = (Array.isArray(role) ? role : [role]).map(normalizeRole);
+  if (!allowed.includes(normalizeRole(auth.role))) {
     return { ok: false, status: 403, code: "FORBIDDEN", error: "You do not have permission to perform this action." };
   }
   return auth;

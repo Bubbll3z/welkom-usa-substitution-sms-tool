@@ -260,6 +260,25 @@ test("authentication supports login, session, logout, wrong password, and expire
   assert.equal(afterLogout.statusCode, 401);
 });
 
+test("manager users are normalized to admin access", async () => {
+  const created = await createUser({
+    username: "manager",
+    displayName: "Manager User",
+    password: "managerpass123",
+    role: "manager"
+  });
+  assert.equal(created.ok, true);
+  assert.equal(created.user.role, "admin");
+
+  const cookie = await loginCookie("managerpass123", "manager");
+  const session = await handler(event("/api/session", undefined, { cookie }, "GET"));
+  assert.equal(session.statusCode, 200);
+  assert.equal(JSON.parse(session.body).role, "admin");
+
+  const listed = await adminListUsersHandler(event("/.netlify/functions/admin-list-users", undefined, { cookie }, "GET"));
+  assert.equal(listed.statusCode, 200);
+});
+
 test("remember me login extends only the absolute session limit", async () => {
   process.env.REMEMBER_ME_DAYS = "2";
   const response = await authLoginHandler(event("/.netlify/functions/auth-login", {

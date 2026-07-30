@@ -303,8 +303,16 @@
     const config = routes[route] || routes["/menu"];
     if (config.access === "public") return true;
     if (!state.auth) return false;
-    if (config.access === "admin") return state.auth.role === "admin";
-    return ["staff", "admin"].includes(state.auth.role);
+    const role = normalizedRole();
+    if (config.access === "admin") return role === "admin";
+    return ["staff", "admin"].includes(role);
+  }
+
+  function normalizedRole() {
+    const role = String(state.auth?.role || "").trim().toLowerCase();
+    if (["admin", "administrator", "manager", "owner"].includes(role)) return "admin";
+    if (["staff", "user", "warehouse"].includes(role)) return "staff";
+    return role;
   }
 
   function go(route, push = true) {
@@ -472,7 +480,7 @@
         state.auth = result.user;
         state.csrfToken = result.csrfToken || "";
         state.config = result.config || {};
-        go(result.user.role === "admin" ? "/admin/dashboard" : "/menu");
+        go(normalizedRole() === "admin" ? "/admin/dashboard" : "/menu");
       } catch (error) {
         generalError = error.code === "RATE_LIMITED" ? errorMessages.RATE_LIMITED : "The username or password is incorrect.";
         if (error.message === "Failed to fetch") generalError = errorMessages.FailedFetch || "The app could not connect to the server. Check the connection and try again.";
@@ -529,7 +537,7 @@
         h("div", { class: "menu-stat" }, [h("span", { text: "Sending Mode" }), modeValue])
       ]),
       h("div", { class: "menu-card-list" }, tiles.map(([path, title, copy, iconName]) => menuTile(path, title, copy, iconName))),
-      state.auth?.role === "admin" ? card("Administrator tools", [
+      normalizedRole() === "admin" ? card("Administrator tools", [
         h("p", { class: "muted", text: "You can also open the administrator area for settings, templates, backups and users." }),
         button("Open Admin Overview", "secondary", () => go("/admin/dashboard"))
       ]) : null
