@@ -149,7 +149,7 @@ function safeConfigDiagnostics(event) {
   add("Staff user store", true, "Create at least one admin user in the welkom-sms-users Blob store.");
   add("Session store", true, "Staff sessions are stored in the welkom-sms-sessions Blob store.");
   add("SHOPIFY_SHOP_DOMAIN", Boolean(process.env.SHOPIFY_SHOP_DOMAIN), "Add SHOPIFY_SHOP_DOMAIN, for example welkom-usa.myshopify.com.");
-  add("Shopify credentials", hasConfig(), "Add SHOPIFY_ADMIN_ACCESS_TOKEN or SHOPIFY_CLIENT_ID plus SHOPIFY_CLIENT_SECRET.");
+  add("Shopify credentials", hasConfig(), "Add SHOPIFY_ADMIN_ACCESS_TOKEN from an installed Shopify Admin API custom app. Client ID/Secret alone is not enough unless SHOPIFY_CLIENT_CREDENTIALS_ENABLED=true is intentionally supported for this shop.");
   add("TWILIO_ACCOUNT_SID", /^AC[a-fA-F0-9]{32}$/.test(String(process.env.TWILIO_ACCOUNT_SID || "")), "Add a valid TWILIO_ACCOUNT_SID starting with AC.");
   add("Twilio auth", Boolean(process.env.TWILIO_AUTH_TOKEN || (process.env.TWILIO_API_KEY_SID && process.env.TWILIO_API_KEY_SECRET)), "Add TWILIO_AUTH_TOKEN or TWILIO_API_KEY_SID plus TWILIO_API_KEY_SECRET.");
   add("Twilio sender", Boolean(process.env.TWILIO_MESSAGING_SERVICE_SID || process.env.TWILIO_FROM_NUMBER || process.env.TWILIO_PHONE_NUMBER), "Add TWILIO_MESSAGING_SERVICE_SID or a Twilio from number.");

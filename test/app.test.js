@@ -602,13 +602,14 @@ test("Shopify consent mapping and exact order search", async () => {
   assert.equal(partial.status, 404);
 });
 
-test("Shopify client credentials grant retrieves an expiring Admin API token", async () => {
+test("Shopify client credentials grant retrieves an expiring Admin API token only when explicitly enabled", async () => {
   const calls = [];
   const token = await getAccessToken({
     env: {
       SHOPIFY_SHOP_DOMAIN: "welkom-usa.myshopify.com",
       SHOPIFY_CLIENT_ID: "client-id",
       SHOPIFY_CLIENT_SECRET: "client-secret",
+      SHOPIFY_CLIENT_CREDENTIALS_ENABLED: "true",
       SHOPIFY_API_VERSION: "2025-10"
     },
     fetchImpl: async (url, options) => {

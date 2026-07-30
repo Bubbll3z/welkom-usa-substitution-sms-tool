@@ -12,7 +12,8 @@ function getConfig(env = process.env) {
     accessToken: env.SHOPIFY_ADMIN_ACCESS_TOKEN || "",
     clientId: env.SHOPIFY_CLIENT_ID || "",
     clientSecret: env.SHOPIFY_CLIENT_SECRET || "",
-    apiVersion: env.SHOPIFY_API_VERSION || DEFAULT_API_VERSION
+    apiVersion: env.SHOPIFY_API_VERSION || DEFAULT_API_VERSION,
+    clientCredentialsEnabled: String(env.SHOPIFY_CLIENT_CREDENTIALS_ENABLED || "").toLowerCase() === "true"
   };
 }
 
@@ -25,7 +26,7 @@ function hasConfig(env = process.env) {
     config.clientSecret &&
     !config.clientId.startsWith("your_") &&
     !config.clientSecret.startsWith("your_");
-  return Boolean(config.shopDomain === SHOP_DOMAIN && (hasStaticToken || hasClientCredentials));
+  return Boolean(config.shopDomain === SHOP_DOMAIN && (hasStaticToken || (config.clientCredentialsEnabled && hasClientCredentials)));
 }
 
 async function getAccessToken({ env = process.env, fetchImpl = fetch } = {}) {
@@ -33,8 +34,8 @@ async function getAccessToken({ env = process.env, fetchImpl = fetch } = {}) {
   if (config.accessToken && !config.accessToken.startsWith("paste_") && !config.accessToken.startsWith("your_")) {
     return config.accessToken;
   }
-  if (!config.clientId || !config.clientSecret) {
-    throw new Error("Shopify Admin API is not configured.");
+  if (!config.clientCredentialsEnabled || !config.clientId || !config.clientSecret) {
+    throw new Error("Shopify Admin API access token is not configured.");
   }
   const cacheKey = `${config.shopDomain}:${config.clientId}`;
   if (cachedToken && cachedToken.cacheKey === cacheKey && cachedToken.expiresAt > Date.now() + TOKEN_REFRESH_BUFFER_MS) {
