@@ -124,6 +124,65 @@
     while (node.firstChild) node.removeChild(node.firstChild);
   }
 
+  function appendSafe(parent, children) {
+    (Array.isArray(children) ? children : [children]).forEach((child) => {
+      if (child === null || child === undefined) return;
+      parent.append(child);
+    });
+    return parent;
+  }
+
+  function icon(name, attrs = {}) {
+    const paths = {
+      package: [
+        ["path", { d: "m7.5 4.3 4.5 2.6 4.5-2.6" }],
+        ["path", { d: "M3.5 7.2 12 12l8.5-4.8" }],
+        ["path", { d: "M12 22V12" }],
+        ["path", { d: "M20.5 7.2v9.6L12 22l-8.5-5.2V7.2L12 2z" }]
+      ],
+      user: [
+        ["path", { d: "M20 21a8 8 0 0 0-16 0" }],
+        ["circle", { cx: "12", cy: "7", r: "4" }]
+      ],
+      lock: [
+        ["rect", { x: "4", y: "11", width: "16", height: "10", rx: "2" }],
+        ["path", { d: "M8 11V7a4 4 0 0 1 8 0v4" }]
+      ],
+      eye: [
+        ["path", { d: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" }],
+        ["circle", { cx: "12", cy: "12", r: "3" }]
+      ],
+      eyeOff: [
+        ["path", { d: "M3 3l18 18" }],
+        ["path", { d: "M10.6 10.6a3 3 0 0 0 4.2 4.2" }],
+        ["path", { d: "M9.9 4.2A10.5 10.5 0 0 1 12 4c6.5 0 10 8 10 8a17.8 17.8 0 0 1-3.1 4.4" }],
+        ["path", { d: "M6.6 6.6C3.7 8.5 2 12 2 12s3.5 8 10 8a10.8 10.8 0 0 0 4.4-.9" }]
+      ],
+      alert: [
+        ["circle", { cx: "12", cy: "12", r: "10" }],
+        ["path", { d: "M12 8v5" }],
+        ["path", { d: "M12 16h.01" }]
+      ]
+    };
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    Object.entries({
+      viewBox: "0 0 24 24",
+      fill: "none",
+      stroke: "currentColor",
+      "stroke-width": "2",
+      "stroke-linecap": "round",
+      "stroke-linejoin": "round",
+      "aria-hidden": "true",
+      ...attrs
+    }).forEach(([key, value]) => svg.setAttribute(key, value));
+    (paths[name] || []).forEach(([tag, shapeAttrs]) => {
+      const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      Object.entries(shapeAttrs).forEach(([key, value]) => node.setAttribute(key, value));
+      svg.append(node);
+    });
+    return svg;
+  }
+
   function page(title, intro, body, actions = null) {
     return h("section", { class: "page" }, [
       h("div", { class: "page-heading" }, [
@@ -300,37 +359,95 @@
     let password = "";
     let rememberMe = false;
     let showPassword = false;
-    let errorText = "";
+    let generalError = "";
+    let usernameError = "";
+    let passwordError = "";
     let loading = false;
 
     const form = h("form", { class: "login-card" });
     const draw = () => {
       clear(form);
-      const passwordInput = input(showPassword ? "text" : "password", password, (value) => { password = value; }, { autocomplete: "current-password" });
-      form.append(
-        h("div", { class: "login-brand" }, [h("div", { class: "brand-mark", text: "WE" }), h("strong", { text: "Welkom USA SMS" })]),
-        h("h1", { text: "Staff Login" }),
-        h("p", { class: "muted", text: "Sign in to send substitution messages and review replies." }),
-        errorText ? h("div", { class: "alert error", text: errorText }) : null,
-        field("Username", input("text", username, (value) => { username = value; }, { autocomplete: "username", autofocus: "" })),
-        field("Password", passwordInput),
-        h("label", { class: "check-row" }, [
-          input("checkbox", "", (_, event) => { rememberMe = event.target.checked; }, { checked: rememberMe }),
-          h("span", { text: "Remember me" })
+      const usernameId = "loginUsername";
+      const passwordId = "loginPassword";
+      const passwordToggle = button("", "login-eye", () => { showPassword = !showPassword; draw(); }, {
+        "aria-label": showPassword ? "Hide password" : "Show password"
+      });
+      passwordToggle.append(icon(showPassword ? "eyeOff" : "eye", { class: "login-eye-icon" }));
+      appendSafe(form, [
+        h("div", { class: "login-brand" }, [
+          icon("package", { class: "login-brand-icon" }),
+          h("strong", { text: "Welkom USA SMS" })
         ]),
-        h("p", { class: "muted small", text: "Only use Remember me on the authorised warehouse device." }),
-        h("div", { class: "split-actions" }, [
-          button(showPassword ? "Hide password" : "Show password", "secondary", () => { showPassword = !showPassword; draw(); }),
-          button(loading ? "Logging in..." : "Log In", "primary", submit, { disabled: loading })
-        ])
-      );
+        h("h1", { text: "Staff Login" }),
+        h("p", { class: "login-subtitle", text: "Sign in to send substitution messages and review replies." }),
+        generalError ? h("div", { class: "login-error-banner", role: "alert" }, [
+          icon("alert", { class: "login-error-icon" }),
+          h("span", { text: generalError })
+        ]) : null,
+        h("div", { class: "login-field" }, [
+          h("label", { htmlFor: usernameId, text: "Username or Staff ID" }),
+          h("div", { class: `login-input-wrap ${usernameError ? "invalid" : ""}` }, [
+            icon("user", { class: "login-input-icon" }),
+            input("text", username, (value) => {
+              username = value;
+              usernameError = "";
+              generalError = "";
+            }, {
+              id: usernameId,
+              autocomplete: "username",
+              autofocus: "",
+              placeholder: "Enter username",
+              "aria-invalid": usernameError ? "true" : "false",
+              "aria-describedby": usernameError ? "usernameError" : ""
+            })
+          ]),
+          usernameError ? h("p", { id: "usernameError", class: "login-field-error", text: usernameError }) : null
+        ]),
+        h("div", { class: "login-field" }, [
+          h("label", { htmlFor: passwordId, text: "Password" }),
+          h("div", { class: `login-input-wrap ${passwordError ? "invalid" : ""}` }, [
+            icon("lock", { class: "login-input-icon" }),
+            input(showPassword ? "text" : "password", password, (value) => {
+              password = value;
+              passwordError = "";
+              generalError = "";
+            }, {
+              id: passwordId,
+              autocomplete: "current-password",
+              placeholder: "Enter password",
+              "aria-invalid": passwordError ? "true" : "false",
+              "aria-describedby": passwordError ? "passwordError" : ""
+            }),
+            passwordToggle
+          ]),
+          passwordError ? h("p", { id: "passwordError", class: "login-field-error", text: passwordError }) : null
+        ]),
+        h("div", { class: "remember-panel" }, [
+          h("div", { class: "remember-row" }, [
+            h("span", { text: "Remember me on this device" }),
+            button("", `remember-switch ${rememberMe ? "on" : ""}`, () => { rememberMe = !rememberMe; draw(); }, {
+              role: "switch",
+              "aria-checked": rememberMe ? "true" : "false",
+              "aria-label": "Remember me on this device"
+            })
+          ]),
+          h("p", { text: "Only use on authorised warehouse devices." })
+        ]),
+        button("", "login-submit", submit, { disabled: loading })
+      ]);
+      const submitButton = form.querySelector(".login-submit");
+      if (submitButton) {
+        clear(submitButton);
+        if (loading) submitButton.append(h("span", { class: "login-spinner" }));
+        submitButton.append(document.createTextNode(loading ? "Signing in..." : "Log In"));
+      }
     };
     const submit = async (event) => {
       event?.preventDefault();
-      errorText = "";
-      if (!username.trim()) errorText = "Enter your username.";
-      else if (!password) errorText = "Enter your password.";
-      if (errorText) return draw();
+      generalError = "";
+      usernameError = username.trim() ? "" : "Enter your username or staff ID.";
+      passwordError = password ? "" : "Enter your password.";
+      if (usernameError || passwordError) return draw();
       loading = true;
       draw();
       try {
@@ -344,8 +461,8 @@
         state.config = result.config || {};
         go(result.user.role === "admin" ? "/admin/dashboard" : "/menu");
       } catch (error) {
-        errorText = error.code === "RATE_LIMITED" ? errorMessages.RATE_LIMITED : "The username or password is incorrect.";
-        if (error.message === "Failed to fetch") errorText = errorMessages.FailedFetch || "The app could not connect to the server. Check the connection and try again.";
+        generalError = error.code === "RATE_LIMITED" ? errorMessages.RATE_LIMITED : "The username or password is incorrect.";
+        if (error.message === "Failed to fetch") generalError = errorMessages.FailedFetch || "The app could not connect to the server. Check the connection and try again.";
         loading = false;
         draw();
       }
