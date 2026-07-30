@@ -163,20 +163,21 @@ h3 {
 
 .app-shell {
   min-height: 100vh;
+  background: #f9f8f6;
 }
 
 .staff-header {
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 50;
   display: grid;
   grid-template-columns: minmax(220px, 1fr) auto;
   align-items: center;
   gap: 16px;
-  padding: 14px 24px;
+  min-height: 64px;
+  padding: 0 24px;
   border-bottom: 1px solid #e2e8f0;
-  background: rgba(249, 248, 246, 0.94);
-  backdrop-filter: blur(14px);
+  background: #ffffff;
 }
 
 .brand-row,
@@ -189,8 +190,8 @@ h3 {
 .brand-mark {
   display: grid;
   place-items: center;
-  width: 38px;
-  height: 38px;
+  width: auto;
+  height: auto;
   color: #0f172a;
   font-size: 18px;
   font-weight: 950;
@@ -233,9 +234,9 @@ h3 {
 }
 
 .main {
-  width: min(1280px, calc(100% - 40px));
+  width: min(720px, calc(100% - 48px));
   margin: 0 auto;
-  padding: 30px 0 56px;
+  padding: 24px 0 56px;
 }
 
 .user-menu {
@@ -246,46 +247,42 @@ h3 {
 }
 
 .user-menu-button {
-  min-height: 44px;
+  min-width: 40px;
+  min-height: 40px;
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  border: 1px solid #e2e8f0;
+  justify-content: center;
+  border: 0;
   border-radius: 999px;
-  background: #ffffff;
-  color: #334155;
-  padding: 6px 12px 6px 6px;
-  font-size: 13px;
-  font-weight: 750;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  background: transparent;
+  padding: 0;
 }
 
 .staff-avatar {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   border-radius: 999px;
   background: #059669;
   color: #ffffff;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 900;
 }
 
 .logout-link {
   min-height: 40px;
-  border: 1px solid #e2e8f0;
-  border-radius: 999px;
-  background: #ffffff;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
   color: #64748b;
-  padding: 8px 14px;
-  font-size: 13px;
+  padding: 8px 10px;
+  font-size: 14px;
   font-weight: 800;
 }
 
 .logout-link:hover {
-  color: #0f172a;
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+  color: #059669;
 }
 
 .page {
@@ -1464,25 +1461,24 @@ h3 {
 
 @media (max-width: 640px) {
   .main {
-    width: min(100% - 24px, 1280px);
-    padding-top: 18px;
+    width: min(100% - 32px, 720px);
+    padding-top: 24px;
   }
 
   .staff-header {
-    position: static;
-    grid-template-columns: 1fr;
-    padding: 14px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    min-height: 64px;
+    padding: 0 16px;
   }
 
   .user-menu {
-    width: 100%;
-    justify-content: space-between;
+    width: auto;
+    justify-content: end;
   }
 
   .user-menu-button {
     min-width: 0;
-    flex: 1;
-    justify-content: flex-start;
+    flex: 0 0 auto;
   }
 
   .grid.two,
@@ -1551,5 +1547,11 @@ h3 {
   .split-actions {
     display: grid;
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 380px) {
+  .brand-row strong {
+    display: none;
   }
 }

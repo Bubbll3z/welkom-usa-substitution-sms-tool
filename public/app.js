@@ -386,7 +386,7 @@
     document.title = `${config.title} - Welkom USA SMS`;
     els.staffHeader.classList.toggle("hidden", !state.auth || state.route === "/login" || state.route === "/respond");
     const staffName = state.auth ? staffDisplayName() : "Staff";
-    els.staffGreeting.textContent = state.auth ? staffName : "Staff workspace";
+    if (els.staffGreeting) els.staffGreeting.textContent = state.auth ? staffName : "Staff workspace";
     if (els.staffAvatar) els.staffAvatar.textContent = initials(staffName);
     renderQuickNav();
     clear(els.main);
