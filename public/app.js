@@ -495,7 +495,7 @@
           ]),
           h("p", { text: "Only use on authorised warehouse devices." })
         ]),
-        button("", "login-submit", submit, { disabled: loading })
+        h("button", { type: "submit", class: "btn login-submit", disabled: loading })
       ]);
       const submitButton = form.querySelector(".login-submit");
       if (submitButton) {
