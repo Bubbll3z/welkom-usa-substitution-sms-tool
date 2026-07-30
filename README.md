@@ -98,7 +98,7 @@ SUBSTITUTION_TOKEN_PEPPER=
 RATE_LIMIT_KEY_PEPPER=
 ```
 
-Staff passwords are **not** configured through environment variables anymore. Create staff users with `npm run create-admin` first, then create additional staff users from admin endpoints/tools. For Shopify order and product lookup, use an installed Shopify Admin API custom app and set `SHOPIFY_ADMIN_ACCESS_TOKEN`. Keep `SHOPIFY_CLIENT_ID` and `SHOPIFY_CLIENT_SECRET` for webhook validation or future OAuth work, but do not rely on them alone for Admin API order lookup unless `SHOPIFY_CLIENT_CREDENTIALS_ENABLED=true` is intentionally supported for this shop. `SHOPIFY_WEBHOOK_SECRET` is optional unless you configure Shopify webhooks; if omitted, webhook validation falls back to `SHOPIFY_CLIENT_SECRET`. Use either Twilio Auth Token auth or API Key auth. Use either a Twilio sender phone number/from number or a Messaging Service SID.
+Staff passwords are **not** configured through environment variables anymore. Create staff users with `npm run create-admin` first, then create additional staff users from admin endpoints/tools. For Shopify order and product lookup, use either a static installed custom-app Admin API token in `SHOPIFY_ADMIN_ACCESS_TOKEN`, or Shopify's 24-hour client-credentials flow with `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET` and `SHOPIFY_CLIENT_CREDENTIALS_ENABLED=true`. In the client-credentials flow the app requests a fresh token server-side and refreshes it when it is close to expiry. `SHOPIFY_WEBHOOK_SECRET` is optional unless you configure Shopify webhooks; if omitted, webhook validation falls back to `SHOPIFY_CLIENT_SECRET`. Use either Twilio Auth Token auth or API Key auth. Use either a Twilio sender phone number/from number or a Messaging Service SID.
 `PUBLIC_APP_URL` should be the deployed Netlify site URL so customer response links open the production app. `SUBSTITUTION_TOKEN_PEPPER` should be a random secret used only for hashing customer response tokens. `RATE_LIMIT_KEY_PEPPER` is optional but recommended so rate-limit hashes cannot be compared across environments.
 
 ## Production Secret Checklist
@@ -158,13 +158,21 @@ SMS consent = Yes
 
 The app only treats consent as granted when the key matches `SMS consent` case-insensitively and the value equals `Yes` case-insensitively. Accelerated checkout orders may not include this attribute; those are treated as no consent and sending is blocked.
 
-After installing the Shopify Admin API custom app, copy the Admin API access token into Netlify:
+If Shopify gives you a static Admin API access token, copy it into Netlify:
 
 ```env
 SHOPIFY_ADMIN_ACCESS_TOKEN=shpat_or_admin_token_value_here
 ```
 
-Do not paste this value into chat or commit it to GitHub. If your Shopify app setup genuinely supports client credentials for Admin API access, you can set `SHOPIFY_CLIENT_CREDENTIALS_ENABLED=true` with `SHOPIFY_CLIENT_ID` and `SHOPIFY_CLIENT_SECRET`; otherwise leave it false and use the Admin API access token.
+If your Shopify Dev Dashboard app uses the 24-hour client-credentials flow, leave `SHOPIFY_ADMIN_ACCESS_TOKEN` empty and set:
+
+```env
+SHOPIFY_CLIENT_ID=your_client_id
+SHOPIFY_CLIENT_SECRET=your_client_secret
+SHOPIFY_CLIENT_CREDENTIALS_ENABLED=true
+```
+
+Do not paste these values into chat or commit them to GitHub. Shopify client-credentials tokens expire after about 24 hours; the app handles this by requesting a new token from `https://welkom-usa.myshopify.com/admin/oauth/access_token` when needed.
 
 Optional Shopify webhook endpoint:
 
