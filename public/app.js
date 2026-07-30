@@ -74,18 +74,25 @@
       mode: "order",
       step: "order",
       orderQuery: "",
+      orderSearchError: "",
       order: null,
       manual: {
         phone: "",
         firstName: "",
         reference: "",
-        consentConfirmed: false
+        consentConfirmed: false,
+        error: "",
+        unavailableItem: "",
+        substituteItem: ""
       },
       replacements: [],
       message: "",
+      quickNote: "",
+      linkExpiryHours: "24",
       includeStaffCopy: false,
       authorizedResend: false,
-      lastSendResult: null
+      lastSendResult: null,
+      sentAt: ""
     };
   }
 
@@ -182,6 +189,21 @@
       ],
       chevronRight: [
         ["path", { d: "m9 18 6-6-6-6" }]
+      ],
+      search: [
+        ["circle", { cx: "11", cy: "11", r: "8" }],
+        ["path", { d: "m21 21-4.3-4.3" }]
+      ],
+      smartphone: [
+        ["rect", { x: "7", y: "2", width: "10", height: "20", rx: "2" }],
+        ["path", { d: "M11 18h2" }]
+      ],
+      check: [
+        ["path", { d: "m20 6-11 11-5-5" }]
+      ],
+      send: [
+        ["path", { d: "m22 2-7 20-4-9-9-4z" }],
+        ["path", { d: "M22 2 11 13" }]
       ]
     };
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -574,55 +596,91 @@
   }
 
   function progress(current) {
-    const steps = [["order", "Find Customer"], ["items", "Choose Items"], ["message", "Review Message"]];
-    return h("ol", { class: "progress" }, steps.map(([key, label], index) => h("li", { class: key === current ? "current" : steps.findIndex(([step]) => step === current) > index ? "done" : "" }, [
-      h("span", { text: String(index + 1) }),
-      h("strong", { text: label })
-    ])));
+    const steps = [["order", "Find Order"], ["items", "Pick Items"], ["message", "Review & Send"]];
+    const currentIndex = steps.findIndex(([step]) => step === current);
+    return h("ol", { class: "wizard-progress" }, steps.map(([key, label], index) => {
+      const done = currentIndex > index;
+      const active = key === current;
+      return h("li", { class: `${active ? "active" : ""} ${done ? "done" : ""}`.trim() }, [
+        h("span", { class: "wizard-step-line" }),
+        h("span", { class: "wizard-step-dot" }, [done ? icon("check") : document.createTextNode(String(index + 1))]),
+        h("strong", { text: label })
+      ]);
+    }));
+  }
+
+  function modeCard(mode, title, copy, iconName) {
+    const active = state.substitution.mode === mode;
+    return h("button", {
+      type: "button",
+      class: `mode-card ${active ? "selected" : ""}`,
+      "aria-pressed": active ? "true" : "false",
+      onClick: () => {
+        state.substitution.mode = mode;
+        state.substitution.orderSearchError = "";
+        state.substitution.manual.error = "";
+        render();
+      }
+    }, [
+      icon(iconName, { class: "mode-icon" }),
+      h("span", {}, [h("strong", { text: title }), h("small", { text: copy })])
+    ]);
+  }
+
+  function actionButton(label, className, onClick, attrs = {}, iconName = "") {
+    return h("button", { type: "button", class: `btn ${className || "secondary"}`, onClick, ...attrs }, [
+      iconName ? icon(iconName, { class: "btn-icon" }) : null,
+      h("span", { text: label })
+    ]);
   }
 
   function renderSubstitution(step) {
     state.substitution.step = step;
-    return page("Send Substitution SMS", "Work through the steps. Nothing sends until you confirm on the final screen.", [
-      progress(step),
-      step === "order" ? renderFindCustomer() : null,
-      step === "items" ? renderChooseItems() : null,
-      step === "message" ? renderReviewMessage() : null
+    return page("Send Substitution SMS", "Work through the steps. Nothing sends until you confirm.", [
+      h("div", { class: "wizard-shell" }, [
+        progress(step),
+        step === "order" ? renderFindCustomer() : null,
+        step === "items" ? renderChooseItems() : null,
+        step === "message" ? renderReviewMessage() : null
+      ])
     ], button("Back to Main Menu", "secondary", () => confirmDiscard("/menu")));
   }
 
   function renderFindCustomer() {
     const s = state.substitution;
-    const modeToggle = h("label", { class: "check-row" }, [
-      input("checkbox", "", (_, event) => {
-        s.mode = event.target.checked ? "manual" : "order";
-        render();
-      }, { checked: s.mode === "manual" }),
-      h("span", { text: "Enter a phone number manually" })
-    ]);
-    return h("div", { class: "stack" }, [
-      card("Step 1: Find Customer", [
-        modeToggle,
+    const helper = customerStepHelper();
+    return h("article", { class: "wizard-card" }, [
+      h("div", { class: "wizard-section-title" }, [
+        h("h2", { text: "Step 1: Find the Order" }),
+        h("p", { text: "Search Shopify first, or choose manual number for a phone/in-store customer." })
+      ]),
+      h("div", { class: "mode-grid" }, [
+        modeCard("order", "Shopify Order", "Find customer details from an order number.", "package"),
+        modeCard("manual", "Manual Number", "Use for physical-shop or non-Shopify customers.", "smartphone")
+      ]),
+      h("div", { class: "stack" }, [
         s.mode === "order" && state.config?.shopifyConfigured === false
           ? h("div", { class: "alert warn", text: "Shopify search is not connected yet. Ask an admin to check Settings, or use manual phone number mode for now." })
           : null,
         s.mode === "order" ? renderOrderSearch() : renderManualRecipient(),
         s.order ? renderOrderSummary(s.order) : null,
-        h("div", { class: "actions" }, [
-          button("Start Over", "secondary", () => confirmStartOver()),
-          button("Continue", "primary", () => continueFromCustomer(), { disabled: !customerStepValid() })
-        ])
+        helper ? h("div", { class: "alert subtle", text: helper }) : null
+      ]),
+      h("div", { class: "wizard-actions" }, [
+        button("Back to Menu", "ghost", () => confirmDiscard("/menu")),
+        h("span"),
+        button("Start Over", "secondary", () => confirmStartOver()),
+        actionButton("Continue to Items", "primary big", () => continueFromCustomer(), { disabled: !customerStepValid() }, "chevronRight")
       ])
     ]);
   }
 
   function renderOrderSearch() {
     const s = state.substitution;
-    let localError = "";
     const search = async () => {
-      localError = "";
+      s.orderSearchError = "";
       if (!s.orderQuery.trim()) {
-        localError = "Enter an order number before searching.";
+        s.orderSearchError = "Enter an order number before searching.";
         render();
         return;
       }
@@ -637,7 +695,7 @@
         s.replacements = [];
         autoSelectZeroStockItems();
       } catch (error) {
-        localError = messageFor(error);
+        s.orderSearchError = messageFor(error);
         s.order = null;
       } finally {
         state.busy = false;
@@ -645,14 +703,26 @@
       }
     };
     return h("div", { class: "stack" }, [
-      field("Order number", input("text", s.orderQuery, (value) => { s.orderQuery = value; }, { placeholder: "1023 or #1023" }), localError),
-      h("div", { class: "actions" }, [button(state.busy ? "Searching..." : "Search", "primary", search, { disabled: state.busy })])
+      h("div", { class: "field" }, [
+        h("label", { text: "Order Number" }),
+        h("div", { class: "input-with-icon" }, [
+          icon("search"),
+          input("text", s.orderQuery, (value) => {
+            s.orderQuery = value;
+            s.orderSearchError = "";
+          }, { placeholder: "#1023 or 1023", onKeyDown: (event) => { if (event.key === "Enter") search(); } })
+        ]),
+        s.orderSearchError ? h("p", { class: "field-error", text: s.orderSearchError }) : null
+      ]),
+      actionButton(state.busy ? "Searching Shopify..." : "Search Shopify", "primary big full", search, { disabled: state.busy }, "search")
     ]);
   }
 
   function renderManualRecipient() {
     const m = state.substitution.manual;
-    return h("div", { class: "grid two" }, [
+    return h("div", { class: "stack" }, [
+      h("p", { class: "muted", text: "For in-store or non-Shopify customers. Staff must confirm the customer gave permission to receive this SMS." }),
+      h("div", { class: "grid two" }, [
       field("Customer phone number", input("tel", m.phone, (value) => { m.phone = value; }, { placeholder: "+12125551234" })),
       field("First name optional", input("text", m.firstName, (value) => { m.firstName = value; }, { placeholder: "Customer" })),
       field("Reference or note", input("text", m.reference, (value) => { m.reference = value; }, { placeholder: "Till slip, receipt or staff note" })),
@@ -661,25 +731,23 @@
         h("span", { text: "I confirm that this customer gave permission to receive this SMS." })
       ]),
       !m.phone || isE164(m.phone) ? null : h("p", { class: "field-error wide", text: "Enter a valid customer phone number, including the country code." })
+      ]),
+      actionButton("Continue with This Number", "secondary big full", () => continueFromCustomer(), { disabled: !customerStepValid() }, "smartphone")
     ]);
   }
 
   function renderOrderSummary(order) {
-    return h("div", { class: "summary-grid" }, [
-      card("Customer Details", details([
-        ["Name", fullName(order)],
-        ["Phone", order.customer?.redactedPhone || "-"],
-        ["Email", order.customer?.maskedEmail || "-"],
-        ["SMS Consent", order.smsConsent?.granted ? "Recorded" : "Not recorded"]
-      ]), { class: order.smsConsent?.granted ? "" : "danger" }),
-      card("Order Details", details([
-        ["Order", order.name],
-        ["Date", formatDate(order.processedAt)],
-        ["Payment", order.displayFinancialStatus || "-"],
-        ["Fulfillment", order.displayFulfillmentStatus || "-"],
-        ["Shipping", order.shippingAddressDisplay || formatAddress(order)]
-      ])),
-      card("Order Items", h("div", { class: "item-list" }, (order.lineItems || []).map((item) => productRow(item, null, { plain: true }))), { class: "wide" })
+    const consent = order.smsConsent?.granted;
+    return h("div", { class: "order-result-card" }, [
+      h("div", {}, [
+        h("h3", { text: fullName(order) || "Customer" }),
+        h("p", { text: `${order.name} - ${order.customer?.redactedPhone || "No phone shown"}` }),
+        h("div", { class: "result-badges" }, [
+          h("span", { class: "badge", text: `${(order.lineItems || []).length} item${(order.lineItems || []).length === 1 ? "" : "s"}` }),
+          h("span", { class: consent ? "badge" : "badge error", text: consent ? "SMS OK" : "No SMS consent - use manual mode" })
+        ])
+      ]),
+      button("Use This Order", "secondary", () => continueFromCustomer(), { disabled: !consent })
     ]);
   }
 
@@ -699,35 +767,58 @@
     return Boolean(s.order?.id && s.order?.smsConsent?.granted);
   }
 
+  function customerStepHelper() {
+    const s = state.substitution;
+    if (s.mode === "manual") {
+      if (!isE164(s.manual.phone)) return "Enter the customer phone number with the country code, for example +12125551234.";
+      if (!s.manual.reference.trim()) return "Add a short reference so staff know why this message was sent.";
+      if (!s.manual.consentConfirmed) return "Confirm SMS permission before continuing.";
+      return "";
+    }
+    if (!s.order) return "Search for a Shopify order, then choose Use This Order.";
+    if (!s.order.smsConsent?.granted) return "This order does not show SMS consent. Use manual mode only if the customer gave permission another way.";
+    return "";
+  }
+
   function renderChooseItems() {
     const s = state.substitution;
     const orderMode = s.mode === "order";
-    return page("Choose Items", "Select every unavailable item and choose what staff should offer.", [
-      progress("items"),
-      card("Unavailable Items", orderMode ? renderOrderItemChoices() : renderManualReplacementBuilder()),
-      card("Selected replacements", [
+    const problem = replacementProblem();
+    return h("article", { class: "wizard-card" }, [
+      renderWizardSummary(),
+      h("div", { class: "wizard-section-title" }, [
+        h("h2", { text: "Step 2: Pick Items & Substitutes" }),
+        h("p", { text: orderMode ? "Select unavailable order items and add replacement options." : "Add the item and the replacement option for this manual SMS." })
+      ]),
+      orderMode ? renderOrderItemChoices() : renderManualReplacementBuilder(),
+      h("div", { class: "stack" }, [
+        h("h3", { text: "Selected replacements" }),
         s.replacements.length ? h("div", { class: "replacement-list" }, s.replacements.map(renderReplacementCard)) : h("div", { class: "empty", text: "Select at least one item that needs a substitution." }),
-        h("div", { class: "actions" }, [
-          button("Back", "secondary", () => go("/substitution/order")),
-          button("Start Over", "secondary", () => confirmStartOver()),
-          button("Continue", "primary", () => {
+        problem ? h("div", { class: "alert subtle", text: problem }) : null
+      ]),
+      h("div", { class: "wizard-actions" }, [
+        button("Back", "ghost", () => go("/substitution/order")),
+        h("span"),
+        button("Start Over", "secondary", () => confirmStartOver()),
+        actionButton("Continue to Review", "primary big", () => {
             const problem = replacementProblem();
             if (problem) return toast("error", problem);
             generateMessage();
             go("/substitution/message");
-          }, { disabled: Boolean(replacementProblem()) })
-        ])
+        }, { disabled: Boolean(problem) }, "chevronRight")
       ])
     ]);
   }
 
   function renderOrderItemChoices() {
     const items = state.substitution.order?.lineItems || [];
-    return h("div", { class: "item-list" }, items.map((item) => {
+    return h("div", { class: "item-list wizard-items" }, [
+      h("p", { class: "muted", text: "Select unavailable items to substitute." }),
+      ...items.map((item) => {
       const selected = state.substitution.replacements.find((replacement) => replacement.lineItemId === item.id);
-      return h("div", { class: `choice-row ${selected ? "selected" : ""}` }, [
+      return h("div", { class: `item-select-card ${selected ? "selected" : ""}` }, [
         productRow(item, null, { plain: true }),
-        h("label", { class: "check-row" }, [
+        h("label", { class: "item-check" }, [
           input("checkbox", "", (_, event) => {
             if (event.target.checked) addReplacementFromItem(item);
             else removeReplacement(item.id);
@@ -736,26 +827,27 @@
           h("span", { text: "Needs substitution" })
         ])
       ]);
-    }));
+    })]);
   }
 
   function renderManualReplacementBuilder() {
-    let unavailable = "";
-    let substitute = "";
+    const manual = state.substitution.manual;
     return h("div", { class: "stack" }, [
       h("div", { class: "grid two" }, [
-        field("Unavailable item", input("text", unavailable, (value) => { unavailable = value; }, { placeholder: "Requested item" })),
-        field("Substitute item", input("text", substitute, (value) => { substitute = value; }, { placeholder: "Replacement item or no substitute" }))
+        field("Unavailable item", input("text", manual.unavailableItem, (value) => { manual.unavailableItem = value; }, { placeholder: "Requested item" })),
+        field("Substitute item", input("text", manual.substituteItem, (value) => { manual.substituteItem = value; }, { placeholder: "Replacement item or no substitute" }))
       ]),
-      button("Add Another Item", "secondary", () => {
-        if (!unavailable.trim()) return toast("error", "Select at least one item that needs a substitution.");
+      actionButton("Add Custom Option", "secondary big", () => {
+        if (!manual.unavailableItem.trim()) return toast("error", "Select at least one item that needs a substitution.");
         state.substitution.replacements.push({
           lineItemId: `manual_${Date.now()}`,
-          unavailableTitle: unavailable.trim(),
-          customSubstituteTitle: substitute.trim(),
-          noSubstitutionAvailable: !substitute.trim(),
+          unavailableTitle: manual.unavailableItem.trim(),
+          customSubstituteTitle: manual.substituteItem.trim(),
+          noSubstitutionAvailable: !manual.substituteItem.trim(),
           includeProductLink: false
         });
+        manual.unavailableItem = "";
+        manual.substituteItem = "";
         render();
       })
     ]);
@@ -776,7 +868,8 @@
       includeProductLink: false,
       productUrl: "",
       searchResults: [],
-      searchQuery: ""
+      searchQuery: "",
+      searchError: ""
     });
   }
 
@@ -790,11 +883,10 @@
   }
 
   function renderReplacementCard(replacement) {
-    let itemError = "";
     const search = async () => {
-      itemError = "";
+      replacement.searchError = "";
       if (!replacement.searchQuery?.trim()) {
-        itemError = "Enter a product name before searching.";
+        replacement.searchError = "Enter a product name before searching.";
         render();
         return;
       }
@@ -806,9 +898,9 @@
           body: JSON.stringify({ query: replacement.searchQuery, excludeVariantId: replacement.originalVariantId || "" })
         });
         replacement.searchResults = result.products || [];
-        if (!replacement.searchResults.length) itemError = "No matching products were found. Try another search or enter the substitute manually.";
+        if (!replacement.searchResults.length) replacement.searchError = "No matching products were found. Try another search or enter the substitute manually.";
       } catch (error) {
-        itemError = messageFor(error);
+        replacement.searchError = messageFor(error);
       } finally {
         state.busy = false;
         render();
@@ -817,11 +909,14 @@
     return h("article", { class: "replacement-card" }, [
       h("div", { class: "card-title" }, [h("h3", { text: replacement.unavailableTitle }), button("Remove", "ghost", () => { removeReplacement(replacement.lineItemId); render(); })]),
       h("div", { class: "grid two" }, [
-        field("Search substitute", input("search", replacement.searchQuery, (value) => { replacement.searchQuery = value; }, { placeholder: "Title, SKU or barcode" })),
-        h("div", { class: "field button-field" }, [button(state.busy ? "Searching..." : "Search", "secondary", search, { disabled: state.busy })])
+        field("Search Shopify products", input("search", replacement.searchQuery, (value) => {
+          replacement.searchQuery = value;
+          replacement.searchError = "";
+        }, { placeholder: "Title, SKU or barcode", onKeyDown: (event) => { if (event.key === "Enter") search(); } })),
+        h("div", { class: "field button-field" }, [actionButton(state.busy ? "Searching..." : "Search", "secondary big", search, { disabled: state.busy }, "search")])
       ]),
-      itemError ? h("p", { class: "field-error", text: itemError }) : null,
-      replacement.searchResults?.length ? h("div", { class: "product-grid" }, replacement.searchResults.map((product) => productRow(product, () => {
+      replacement.searchError ? h("p", { class: "field-error", text: replacement.searchError }) : null,
+      replacement.searchResults?.length ? h("div", { class: "product-scroll" }, replacement.searchResults.map((product) => productRow(product, () => {
         replacement.substituteVariantId = product.id;
         replacement.substituteTitle = product.title;
         replacement.customSubstituteTitle = "";
@@ -863,6 +958,16 @@
         }, { checked: replacement.includeProductLink }),
         h("span", { text: "Add product link to message" })
       ])
+    ]);
+  }
+
+  function renderWizardSummary() {
+    const s = state.substitution;
+    const title = s.mode === "order" ? `${s.order?.name || "Order"} - ${fullName(s.order) || "Customer"}` : `Manual SMS - ${s.manual.firstName || "Customer"}`;
+    const subtitle = s.mode === "order" ? `${s.order?.customer?.redactedPhone || "Phone hidden"} - ${(s.order?.lineItems || []).length} item${(s.order?.lineItems || []).length === 1 ? "" : "s"}` : `${maskPhone(s.manual.phone)} - ${s.manual.reference}`;
+    return h("div", { class: "wizard-summary" }, [
+      icon(s.mode === "order" ? "package" : "smartphone"),
+      h("div", {}, [h("strong", { text: title }), h("span", { text: subtitle })])
     ]);
   }
 
@@ -923,33 +1028,59 @@
 
   function renderReviewMessage() {
     const s = state.substitution;
+    if (s.lastSendResult?.success) return renderSendSuccess();
     const estimate = smsEstimate(s.message);
     const copyDisabled = !window.navigator.clipboard;
-    return page("Review Message", "Read the full message before sending. You can still edit it here.", [
-      progress("message"),
-      card("Message details", [
-        details([
-          ["Recipient", s.mode === "order" ? s.order?.customer?.redactedPhone : maskPhone(s.manual.phone)],
-          ["Order/reference", s.mode === "order" ? s.order?.name : s.manual.reference],
-          ["Items", String(s.replacements.length)],
-          ["SMS estimate", `${estimate.encoding} - ${estimate.segments} segment${estimate.segments === 1 ? "" : "s"}`]
-        ]),
-        h("div", { class: estimate.length > 260 ? "alert warn" : "alert subtle", text: `${estimate.length} / 320 characters` })
+    return h("article", { class: "wizard-card" }, [
+      renderWizardSummary(),
+      h("div", { class: "wizard-section-title" }, [
+        h("h2", { text: "Step 3: Review & Send" }),
+        h("p", { text: "Read the full SMS. You can edit the wording before sending." })
       ]),
-      card("Editable SMS message", [
-        textarea(s.message, (value) => { s.message = value; render(); }, { maxlength: "640", rows: "9" }),
-        h("div", { class: "preview" }, [h("strong", { text: "Preview" }), h("p", { text: s.message || "Message preview will appear here." })]),
+      h("div", { class: "phone-preview" }, [
+        h("div", { class: "phone-speaker" }),
+        h("strong", { text: "Message Preview" }),
+        h("p", { text: s.message || "Message preview will appear here." }),
+        h("span", { text: `${estimate.length} / 320 - ${estimate.segments} segment${estimate.segments === 1 ? "" : "s"}` })
+      ]),
+      h("div", { class: "grid two" }, [
+        field("Quick note optional", input("text", s.quickNote, (value) => { s.quickNote = value; }, { placeholder: "Add a quick note for staff records" })),
+        field("Link expiry", select(s.linkExpiryHours, [["24", "24 hours"], ["48", "48 hours"], ["72", "72 hours"]], (value) => { s.linkExpiryHours = value; }))
+      ]),
+      h("div", { class: "stack" }, [
+        field("Editable SMS message", textarea(s.message, (value) => { s.message = value; render(); }, { maxlength: "320", rows: "8" })),
+        h("div", { class: estimate.length > 260 ? "alert warn" : "alert subtle", text: `${estimate.length} / 320 characters - ${estimate.encoding}` }),
         h("label", { class: "check-row" }, [
           input("checkbox", "", (_, event) => { s.includeStaffCopy = event.target.checked; render(); }, { checked: s.includeStaffCopy, disabled: !staffCopyConfigured() }),
           h("span", { text: staffCopyConfigured() ? "Send me a copy" : "An administrator copy number has not been configured." })
         ]),
         s.lastSendResult ? h("div", { class: s.lastSendResult.success ? "alert success" : "alert error", text: s.lastSendResult.message || messageFor(s.lastSendResult) }) : null,
-        h("div", { class: "actions" }, [
-          button("Back", "secondary", () => go("/substitution/items")),
+        h("div", { class: "wizard-actions" }, [
+          button("Back to Edit", "ghost", () => go("/substitution/items")),
+          h("span"),
           button("Copy Message", "secondary", () => copyText(s.message), { disabled: copyDisabled }),
-          button("Start Over", "secondary", () => confirmStartOver()),
-          button(state.busy ? "Sending..." : "Send SMS", "primary", () => confirmSend(), { disabled: state.busy || !s.message.trim() || s.message.length > 640 })
+          actionButton(state.busy ? "Sending..." : "Send SMS", "primary huge", () => confirmSend(), { disabled: state.busy || !s.message.trim() || s.message.length > 320 }, "send")
         ])
+      ])
+    ]);
+  }
+
+  function renderSendSuccess() {
+    const s = state.substitution;
+    const name = s.mode === "order" ? fullName(s.order) : s.manual.firstName || "Customer";
+    return h("article", { class: "wizard-card success-screen" }, [
+      h("div", { class: "success-check" }, [icon("check")]),
+      h("h2", { text: "SMS Sent!" }),
+      h("p", { text: `${name} will receive options for ${s.replacements.length} item${s.replacements.length === 1 ? "" : "s"}.` }),
+      h("div", { class: "actions" }, [
+        button("Send Another", "primary", () => {
+          state.substitution = emptySubstitutionState();
+          go("/substitution/order");
+        }),
+        button("Back to Menu", "ghost", () => {
+          state.substitution = emptySubstitutionState();
+          go("/menu");
+        })
       ])
     ]);
   }
@@ -1004,6 +1135,7 @@
         });
       }
       s.lastSendResult = { success: true, message: result.message || "Message sent successfully." };
+      s.sentAt = new Date().toISOString();
       toast("success", "Message sent successfully.");
       await loadHistoryData();
     } catch (error) {
