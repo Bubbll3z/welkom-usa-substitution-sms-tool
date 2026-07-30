@@ -527,7 +527,14 @@
 
   function menuTile(path, title, copy, iconName) {
     const normalizedIcon = iconName === "edit" ? "penLine" : iconName === "message-square" ? "messageSquare" : iconName;
-    return h("button", { type: "button", class: "menu-tile", onClick: () => go(path) }, [
+    return h("a", {
+      href: path,
+      class: "menu-tile",
+      onClick: (event) => {
+        event.preventDefault();
+        go(path);
+      }
+    }, [
       h("span", { class: "menu-tile-icon" }, [
         icon(normalizedIcon, { class: "menu-icon" }),
         path === "/replies" ? h("span", { class: "menu-unread-dot hidden", "aria-hidden": "true" }) : null
