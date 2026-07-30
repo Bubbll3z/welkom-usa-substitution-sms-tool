@@ -321,6 +321,17 @@
     render();
   }
 
+  function navigateTo(route, event = null) {
+    if (event?.button || event?.metaKey || event?.ctrlKey || event?.shiftKey || event?.altKey) return;
+    event?.preventDefault();
+    event?.stopPropagation();
+    try {
+      go(route);
+    } catch (error) {
+      window.location.assign(route);
+    }
+  }
+
   function render() {
     const config = routes[state.route] || routes["/menu"];
     document.title = `${config.title} - Welkom USA SMS`;
@@ -529,11 +540,9 @@
     const normalizedIcon = iconName === "edit" ? "penLine" : iconName === "message-square" ? "messageSquare" : iconName;
     return h("a", {
       href: path,
+      "data-route": path,
       class: "menu-tile",
-      onClick: (event) => {
-        event.preventDefault();
-        go(path);
-      }
+      onClick: (event) => navigateTo(path, event)
     }, [
       h("span", { class: "menu-tile-icon" }, [
         icon(normalizedIcon, { class: "menu-icon" }),
@@ -1589,6 +1598,11 @@
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !els.dialogLayer.classList.contains("hidden")) els.dialogCancel.click();
   });
+  document.addEventListener("click", (event) => {
+    const routeLink = event.target.closest?.("[data-route]");
+    if (!routeLink) return;
+    navigateTo(routeLink.getAttribute("data-route"), event);
+  }, true);
 
   checkSession();
 })();
