@@ -311,9 +311,28 @@
       error.code = result.code;
       error.status = response.status;
       error.result = result;
+      if (shouldReturnToLogin(error, path)) {
+        handleExpiredSession();
+      }
       throw error;
     }
     return result;
+  }
+
+  function shouldReturnToLogin(error, path) {
+    if (path === "/.netlify/functions/auth-me" || path === "/.netlify/functions/auth-login") return false;
+    return error.status === 401 || error.code === "AUTH_REQUIRED";
+  }
+
+  function handleExpiredSession() {
+    if (!state.auth && state.route === "/login") return;
+    state.auth = null;
+    state.csrfToken = "";
+    state.config = {};
+    state.substitution = emptySubstitutionState();
+    state.custom = emptyCustomState();
+    toast("error", "Your session expired. Please log in again.");
+    go("/login");
   }
 
   function routeFromPath() {
