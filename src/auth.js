@@ -416,6 +416,7 @@ async function delayForFailures(count) {
 async function authenticateUser({ username, password, event, env = process.env, now = Date.now(), rememberMe = false }) {
   const generic = { ok: false, status: 401, code: "AUTH_REQUIRED", error: "Invalid username or password." };
   const normalized = normalizeUsername(username);
+
   const user = await getUserByUsername(normalized, env);
   if (!user) {
     await delayForFailures(2);
@@ -430,6 +431,7 @@ async function authenticateUser({ username, password, event, env = process.env, 
     await recordSecurityEvent("login_failed", { userId: user.id, username: user.username, reason: "locked" }, env);
     return generic;
   }
+
   await delayForFailures(user.failedLoginCount || 0);
   const verified = await verifyPassword(password, user);
   if (!verified) {

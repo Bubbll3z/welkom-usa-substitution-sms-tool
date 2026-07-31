@@ -226,6 +226,32 @@
     return svg;
   }
 
+  function provider(env = process.env) {
+  if (env.NODE_ENV === "test") {
+    return "memory";
+  }
+
+  const configuredProvider = String(
+    env.MESSAGE_STORAGE_PROVIDER || ""
+  ).toLowerCase();
+
+  if (configuredProvider) {
+    return configuredProvider;
+  }
+
+  if (env.NETLIFY === "true") {
+    return "netlify-blobs";
+  }
+
+  if (env.NODE_ENV === "production") {
+    throw new Error(
+      "MESSAGE_STORAGE_PROVIDER must be configured in production."
+    );
+  }
+
+  return "memory";
+}
+
   function page(title, intro, body, actions = null) {
     return h("section", { class: "page" }, [
       h("div", { class: "page-heading" }, [
@@ -321,8 +347,14 @@
   }
 
   function shouldReturnToLogin(error, path) {
-    if (path === "/.netlify/functions/auth-me" || path === "/.netlify/functions/auth-login") return false;
-    return error.status === 401 || error.code === "AUTH_REQUIRED";
+  if (
+    path === "/.netlify/functions/auth-me" ||
+    path === "/.netlify/functions/auth-login"
+  ) {
+    return false;
+  }
+
+  return error.code === "AUTH_REQUIRED";
   }
 
   function handleExpiredSession() {
