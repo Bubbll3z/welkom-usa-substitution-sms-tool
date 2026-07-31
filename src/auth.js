@@ -127,16 +127,6 @@ function timingSafeEqualHex(left, right) {
   return crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
-function timingSafeEqualText(left, right) {
-  const leftBuffer = Buffer.from(String(left || ""));
-  const rightBuffer = Buffer.from(String(right || ""));
-  if (!leftBuffer.length || leftBuffer.length !== rightBuffer.length) {
-    crypto.timingSafeEqual(Buffer.alloc(1), Buffer.alloc(1));
-    return false;
-  }
-  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
-}
-
 function scryptAsync(password, salt) {
   return new Promise((resolve, reject) => {
     crypto.scrypt(String(password || ""), salt, SCRYPT_KEY_LENGTH, SCRYPT_PARAMS, (error, derivedKey) => {
@@ -428,8 +418,6 @@ async function authenticateUser({ username, password, event, env = process.env, 
   const normalized = normalizeUsername(username);
   const user = await getUserByUsername(normalized, env);
   if (!user) {
-    const bootstrap = await tryBootstrapAdminLogin({ username: normalized, password, event, env, now, rememberMe });
-    if (bootstrap) return bootstrap;
     await delayForFailures(2);
     await recordSecurityEvent("login_failed", { username: normalized || "[missing]", reason: "generic" }, env);
     return generic;
@@ -454,41 +442,6 @@ async function authenticateUser({ username, password, event, env = process.env, 
   }
   const saved = await saveUser({ ...user, failedLoginCount: 0, lockedUntil: null, lastLoginAt: nowIso(now) }, env);
   const session = await createSession({ user: saved, event, env, now, rememberMe });
-  await recordSecurityEvent("login_success", { userId: saved.id, username: saved.username }, env);
-  return {
-    ok: true,
-    user: sanitizeUser(saved),
-    session: session.session,
-    cookie: session.cookie
-  };
-}
-
-async function tryBootstrapAdminLogin({ username, password, event, env = process.env, now = Date.now(), rememberMe = false }) {
-  const enabled = String(env.ADMIN_BOOTSTRAP_ENABLED || "").toLowerCase() === "true";
-  const bootstrapUsername = normalizeUsername(env.ADMIN_BOOTSTRAP_USERNAME);
-  const bootstrapPassword = String(env.ADMIN_BOOTSTRAP_PASSWORD || "");
-  if (!enabled || !bootstrapUsername || !bootstrapPassword) return null;
-  if (username !== bootstrapUsername || !timingSafeEqualText(password, bootstrapPassword)) return null;
-
-  const existing = await getUserByUsername(bootstrapUsername, env);
-  if (existing) return null;
-
-  const created = await createUser({
-    username: bootstrapUsername,
-    displayName: env.ADMIN_BOOTSTRAP_DISPLAY_NAME || bootstrapUsername,
-    password: bootstrapPassword,
-    role: "admin",
-    isActive: true
-  }, env);
-  if (!created.ok) {
-    await recordSecurityEvent("bootstrap_admin_failed", { username: bootstrapUsername, code: created.code || "UNKNOWN" }, env);
-    return { ok: false, status: 400, code: "BOOTSTRAP_FAILED", error: "Bootstrap admin could not be created." };
-  }
-
-  const rawUser = await getUserByUsername(bootstrapUsername, env);
-  const saved = await saveUser({ ...rawUser, failedLoginCount: 0, lockedUntil: null, lastLoginAt: nowIso(now) }, env);
-  const session = await createSession({ user: saved, event, env, now, rememberMe });
-  await recordSecurityEvent("bootstrap_admin_created", { userId: saved.id, username: saved.username }, env);
   await recordSecurityEvent("login_success", { userId: saved.id, username: saved.username }, env);
   return {
     ok: true,

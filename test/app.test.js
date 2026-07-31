@@ -17,6 +17,7 @@ const { handler: authMeHandler } = require("../netlify/functions/auth-me");
 const { handler: adminCreateUserHandler } = require("../netlify/functions/admin-create-user");
 const { handler: adminListUsersHandler } = require("../netlify/functions/admin-list-users");
 const { handler: adminDisableUserHandler } = require("../netlify/functions/admin-disable-user");
+const { handler: setupAdminHandler } = require("../netlify/functions/setup-admin");
 const {
   clearAuthMemory,
   createSession,
@@ -234,6 +235,13 @@ test.beforeEach(async () => {
   delete process.env.SHOPIFY_CLIENT_SECRET;
   delete process.env.BLOB_INIT_ENABLED;
   delete process.env.REQUIRE_LOGIN;
+  delete process.env.ADMIN_SETUP_SECRET;
+  delete process.env.PERMANENT_ADMIN_USERNAME;
+  delete process.env.PERMANENT_ADMIN_DISPLAY_NAME;
+  delete process.env.PERMANENT_ADMIN_PASSWORD;
+  ["ENABLED", "USERNAME", "DISPLAY_NAME", "PASSWORD"].forEach((suffix) => {
+    delete process.env[`ADMIN_${"BOOTSTRAP"}_${suffix}`];
+  });
   resetStoreFactory();
   resetAuthStoreFactory();
   await createUser({ username: "admin", displayName: "Admin User", password: "test12345", role: "admin" });
@@ -309,32 +317,61 @@ test("temporary no-login mode no longer bypasses server authentication", async (
   assert.equal(dashboard.statusCode, 401);
 });
 
-test("temporary bootstrap login creates first admin user without exposing password", async () => {
+test("setup-admin creates a permanent admin and legacy env login no longer creates users", async () => {
   clearAuthMemory();
-  process.env.ADMIN_BOOTSTRAP_ENABLED = "true";
-  process.env.ADMIN_BOOTSTRAP_USERNAME = "manager";
-  process.env.ADMIN_BOOTSTRAP_DISPLAY_NAME = "Manager";
-  process.env.ADMIN_BOOTSTRAP_PASSWORD = "bootstrap-pass-123";
+  process.env[`ADMIN_${"BOOTSTRAP"}_ENABLED`] = "true";
+  process.env[`ADMIN_${"BOOTSTRAP"}_USERNAME`] = "legacy-manager";
+  process.env[`ADMIN_${"BOOTSTRAP"}_DISPLAY_NAME`] = "Legacy Manager";
+  process.env[`ADMIN_${"BOOTSTRAP"}_PASSWORD`] = "legacy-setup-pass-123";
 
-  const response = await authLoginHandler(event("/.netlify/functions/auth-login", { username: "manager", password: "bootstrap-pass-123" }, { "x-forwarded-proto": "https" }));
-  assert.equal(response.statusCode, 200);
-  assert.match(response.headers["Set-Cookie"], /HttpOnly/);
-  assert.doesNotMatch(response.body, /bootstrap-pass-123|passwordHash|passwordSalt/);
+  const legacyLogin = await authLoginHandler(event("/.netlify/functions/auth-login", { username: "legacy-manager", password: "legacy-setup-pass-123" }, { "x-forwarded-proto": "https" }));
+  assert.equal(legacyLogin.statusCode, 401);
+  assert.equal(await getUserByUsername("legacy-manager"), null);
+  assert.doesNotMatch(legacyLogin.body, /legacy-setup-pass-123|passwordHash|passwordSalt/);
 
-  const body = JSON.parse(response.body);
-  assert.equal(body.user.username, "manager");
-  assert.equal(body.user.displayName, "Manager");
-  assert.equal(body.user.role, "admin");
+  const getSetup = await setupAdminHandler(event("/.netlify/functions/setup-admin", undefined, {}, "GET"));
+  assert.equal(getSetup.statusCode, 405);
+  assert.equal(getSetup.headers["Cache-Control"], "no-store");
+
+  const noSecret = await setupAdminHandler(event("/.netlify/functions/setup-admin", undefined, {}, "POST"));
+  assert.equal(noSecret.statusCode, 401);
+
+  process.env.ADMIN_SETUP_SECRET = "setup-secret-123";
+  const badSecret = await setupAdminHandler(event("/.netlify/functions/setup-admin", undefined, { "x-admin-setup-secret": "wrong-secret" }, "POST"));
+  assert.equal(badSecret.statusCode, 401);
+
+  const missingConfig = await setupAdminHandler(event("/.netlify/functions/setup-admin", undefined, { "x-admin-setup-secret": "setup-secret-123" }, "POST"));
+  assert.equal(missingConfig.statusCode, 500);
+  assert.doesNotMatch(missingConfig.body, /setup-secret-123|passwordHash|passwordSalt/);
+
+  process.env.PERMANENT_ADMIN_USERNAME = "manager";
+  process.env.PERMANENT_ADMIN_DISPLAY_NAME = "Manager";
+  process.env.PERMANENT_ADMIN_PASSWORD = "permanent-pass-123";
+
+  const created = await setupAdminHandler(event("/.netlify/functions/setup-admin", undefined, { "x-admin-setup-secret": "setup-secret-123" }, "POST"));
+  assert.equal(created.statusCode, 201);
+  assert.equal(created.headers["Cache-Control"], "no-store");
+  assert.doesNotMatch(created.body, /permanent-pass-123|setup-secret-123|passwordHash|passwordSalt/);
+  const createdBody = JSON.parse(created.body);
+  assert.equal(createdBody.user.username, "manager");
+  assert.equal(createdBody.user.displayName, "Manager");
+  assert.equal(createdBody.user.role, "admin");
+  assert.equal(createdBody.user.isActive, true);
 
   const saved = await getUserByUsername("manager");
   assert.equal(saved.role, "admin");
+  assert.equal(saved.isActive, true);
   assert.ok(saved.passwordHash);
-  assert.notEqual(saved.passwordHash, "bootstrap-pass-123");
+  assert.notEqual(saved.passwordHash, "permanent-pass-123");
 
-  delete process.env.ADMIN_BOOTSTRAP_ENABLED;
-  delete process.env.ADMIN_BOOTSTRAP_USERNAME;
-  delete process.env.ADMIN_BOOTSTRAP_DISPLAY_NAME;
-  delete process.env.ADMIN_BOOTSTRAP_PASSWORD;
+  const duplicate = await setupAdminHandler(event("/.netlify/functions/setup-admin", undefined, { "x-admin-setup-secret": "setup-secret-123" }, "POST"));
+  assert.equal(duplicate.statusCode, 409);
+  assert.doesNotMatch(duplicate.body, /permanent-pass-123|setup-secret-123|passwordHash|passwordSalt/);
+
+  const login = await authLoginHandler(event("/.netlify/functions/auth-login", { username: "manager", password: "permanent-pass-123" }, { "x-forwarded-proto": "https" }));
+  assert.equal(login.statusCode, 200);
+  assert.equal(JSON.parse(login.body).user.role, "admin");
+  assert.doesNotMatch(login.body, /permanent-pass-123|passwordHash|passwordSalt/);
 });
 
 test("auth functions protect passwords, disabled users, lockout, roles and cookie flags", async () => {

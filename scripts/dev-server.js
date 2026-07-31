@@ -12,6 +12,7 @@ const { handler: adminCreateUserHandler } = require("../netlify/functions/admin-
 const { handler: adminDisableUserHandler } = require("../netlify/functions/admin-disable-user");
 const { handler: adminListUsersHandler } = require("../netlify/functions/admin-list-users");
 const { handler: adminResetUserPasswordHandler } = require("../netlify/functions/admin-reset-user-password");
+const { handler: setupAdminHandler } = require("../netlify/functions/setup-admin");
 
 const port = process.env.PORT || 3000;
 const publicDir = path.join(__dirname, "..", "public");
@@ -23,7 +24,8 @@ const functionHandlers = {
   "admin-create-user": adminCreateUserHandler,
   "admin-disable-user": adminDisableUserHandler,
   "admin-list-users": adminListUsersHandler,
-  "admin-reset-user-password": adminResetUserPasswordHandler
+  "admin-reset-user-password": adminResetUserPasswordHandler,
+  "setup-admin": setupAdminHandler
 };
 
 function contentType(filePath) {

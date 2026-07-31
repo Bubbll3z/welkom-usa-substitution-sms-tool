@@ -350,16 +350,32 @@ ADMIN_USERNAME=manager ADMIN_DISPLAY_NAME="Manager" ADMIN_PASSWORD="use-a-long-r
 
 Do not add `ADMIN_PASSWORD` to `.env`, GitHub, Netlify environment variables, screenshots, or chat.
 
-For deployed Netlify setup, if you cannot run the local script against the deployed Blob store yet, use the temporary bootstrap login:
+### Creating the first permanent administrator
+
+For deployed Netlify setup, if you cannot run the local script against the deployed Blob store yet, temporarily add these Netlify environment variables:
 
 ```text
-ADMIN_BOOTSTRAP_ENABLED=true
-ADMIN_BOOTSTRAP_USERNAME=manager
-ADMIN_BOOTSTRAP_DISPLAY_NAME=Manager
-ADMIN_BOOTSTRAP_PASSWORD=use-a-long-random-password
+ADMIN_SETUP_SECRET=use-a-long-random-one-time-secret
+PERMANENT_ADMIN_USERNAME=manager
+PERMANENT_ADMIN_DISPLAY_NAME=Manager
+PERMANENT_ADMIN_PASSWORD=use-a-long-random-admin-password
 ```
 
-Redeploy, then log in once with that username and password. The app creates a real admin user in `welkom-sms-users` with a scrypt password hash. After the first successful login, remove these `ADMIN_BOOTSTRAP_*` variables or set `ADMIN_BOOTSTRAP_ENABLED=false`, then redeploy again. Do not leave bootstrap enabled permanently.
+Redeploy once, open the deployed app, then run this one-time command in the browser console. Replace only the setup secret value:
+
+```js
+fetch("/.netlify/functions/setup-admin", {
+  method: "POST",
+  headers: {
+    "X-Admin-Setup-Secret": "paste-the-admin-setup-secret-here"
+  }
+}).then(async (response) => ({
+  status: response.status,
+  body: await response.json()
+})).then(console.log);
+```
+
+HTTP `201` means the permanent active admin was created in `welkom-sms-users`. HTTP `409` means that username already exists. The setup function is temporary: after the account exists, delete `netlify/functions/setup-admin.js`, remove `ADMIN_SETUP_SECRET`, `PERMANENT_ADMIN_USERNAME`, `PERMANENT_ADMIN_DISPLAY_NAME` and `PERMANENT_ADMIN_PASSWORD` from Netlify, then redeploy. Do not leave this setup function or setup variables enabled permanently.
 
 Login behavior:
 
