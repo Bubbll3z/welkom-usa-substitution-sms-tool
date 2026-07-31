@@ -1194,6 +1194,29 @@ test("public customer response page markup is present", () => {
   assert.match(app, /choice-card/);
 });
 
+test("step 2 substitution wizard copy explains replacement choices clearly", () => {
+  const app = fs.readFileSync(path.join(__dirname, "../public/app.js"), "utf8");
+  [
+    "Select each item that is unavailable",
+    "This item is unavailable",
+    "Find a replacement product",
+    "Search by product name, SKU or barcode",
+    "Enter a replacement manually",
+    "No replacement is available",
+    "Complete the replacement choice for every unavailable item before continuing."
+  ].forEach((text) => assert.ok(app.includes(text), `Missing wizard copy: ${text}`));
+});
+
+test("step 2 substitution wizard keeps replacement safeguards visible in frontend logic", () => {
+  const app = fs.readFileSync(path.join(__dirname, "../public/app.js"), "utf8");
+  assert.match(app, /function selectableProduct\(product\)/);
+  assert.match(app, /product\.productStatus === "ARCHIVED"/);
+  assert.match(app, /disabled: !replacement\.substituteVariantId/);
+  assert.match(app, /replacement\.includeProductLink = false/);
+  assert.match(app, /replacementStatus\(replacement\)/);
+  assert.match(app, /aria-pressed/);
+});
+
 test("frontend build does not expose Shopify Admin secrets or direct Admin API calls", () => {
   const html = fs.readFileSync(path.join(__dirname, "../public/index.html"), "utf8");
   const app = fs.readFileSync(path.join(__dirname, "../public/app.js"), "utf8");

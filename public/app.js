@@ -853,7 +853,12 @@
       renderWizardSummary(),
       h("div", { class: "wizard-section-title" }, [
         h("h2", { text: "Step 2: Pick Items & Substitutes" }),
-        h("p", { text: orderMode ? "Select unavailable order items and add replacement options." : "Add the item and the replacement option for this manual SMS." })
+        h("p", { text: orderMode ? "Select each item that is unavailable, then choose what the customer can receive instead. You can select a Shopify product, type a custom replacement, or mark that no replacement is available." : "Add the unavailable item, then choose what the customer can receive instead." })
+      ]),
+      h("ol", { class: "step-guide", "aria-label": "Replacement steps" }, [
+        h("li", { text: "Select the unavailable item." }),
+        h("li", { text: "Find or enter a replacement." }),
+        h("li", { text: "Review the customer message." })
       ]),
       orderMode ? renderOrderItemChoices() : renderManualReplacementBuilder(),
       h("div", { class: "stack" }, [
@@ -861,6 +866,7 @@
         s.replacements.length ? h("div", { class: "replacement-list" }, s.replacements.map(renderReplacementCard)) : h("div", { class: "empty", text: "Select at least one item that needs a substitution." }),
         problem ? h("div", { class: "alert subtle", text: problem }) : null
       ]),
+      problem ? h("p", { class: "continue-helper", text: "Choose a replacement option for every unavailable item to continue." }) : null,
       h("div", { class: "wizard-actions" }, [
         button("Back", "ghost", () => go("/substitution/order")),
         h("span"),
@@ -878,7 +884,7 @@
   function renderOrderItemChoices() {
     const items = state.substitution.order?.lineItems || [];
     return h("div", { class: "item-list wizard-items" }, [
-      h("p", { class: "muted", text: "Select unavailable items to substitute." }),
+      h("p", { class: "muted", text: "Select unavailable items to substitute. Tick the box when the ordered item cannot be supplied." }),
       ...items.map((item) => {
       const selected = state.substitution.replacements.find((replacement) => replacement.lineItemId === item.id);
       return h("div", { class: `item-select-card ${selected ? "selected" : ""}` }, [
@@ -889,7 +895,8 @@
             else removeReplacement(item.id);
             render();
           }, { checked: Boolean(selected) }),
-          h("span", { text: "Needs substitution" })
+          h("span", { text: "This item is unavailable" }),
+          h("small", { text: "Tick this box when the ordered item cannot be supplied." })
         ])
       ]);
     })]);
@@ -948,10 +955,12 @@
   }
 
   function renderReplacementCard(replacement) {
+    const status = replacementStatus(replacement);
+    const linkHelp = productLinkHelp(replacement);
     const search = async () => {
       replacement.searchError = "";
       if (!replacement.searchQuery?.trim()) {
-        replacement.searchError = "Enter a product name before searching.";
+        replacement.searchError = "Enter a product name, SKU or barcode before searching.";
         render();
         return;
       }
@@ -972,57 +981,85 @@
       }
     };
     return h("article", { class: "replacement-card" }, [
-      h("div", { class: "card-title" }, [h("h3", { text: replacement.unavailableTitle }), button("Remove", "ghost", () => { removeReplacement(replacement.lineItemId); render(); })]),
+      h("div", { class: "card-title" }, [
+        h("div", {}, [
+          h("h3", { text: replacement.unavailableTitle }),
+          h("span", { class: `replacement-status ${status.className}`, text: status.text })
+        ]),
+        button("Remove", "ghost", () => { removeReplacement(replacement.lineItemId); render(); })
+      ]),
       h("div", { class: "grid two" }, [
-        field("Search Shopify products", input("search", replacement.searchQuery, (value) => {
-          replacement.searchQuery = value;
-          replacement.searchError = "";
-        }, { placeholder: "Title, SKU or barcode", onKeyDown: (event) => { if (event.key === "Enter") search(); } })),
+        h("div", { class: "field" }, [
+          h("label", { htmlFor: `search_${cssId(replacement.lineItemId)}`, text: "Find a replacement product" }),
+          input("search", replacement.searchQuery, (value) => {
+            replacement.searchQuery = value;
+            replacement.searchError = "";
+          }, { id: `search_${cssId(replacement.lineItemId)}`, placeholder: "Search by product name, SKU or barcode", onKeyDown: (event) => { if (event.key === "Enter") search(); }, "aria-describedby": `searchHelp_${cssId(replacement.lineItemId)}` }),
+          h("p", { id: `searchHelp_${cssId(replacement.lineItemId)}`, class: "field-help", text: "Search the store catalogue, then click the product the customer can receive instead." })
+        ]),
         h("div", { class: "field button-field" }, [actionButton(state.busy ? "Searching..." : "Search", "secondary big", search, { disabled: state.busy }, "search")])
       ]),
       replacement.searchError ? h("p", { class: "field-error", text: replacement.searchError }) : null,
-      replacement.searchResults?.length ? h("div", { class: "product-scroll" }, replacement.searchResults.map((product) => productRow(product, () => {
-        replacement.substituteVariantId = product.id;
-        replacement.substituteTitle = product.title;
-        replacement.customSubstituteTitle = "";
-        replacement.noSubstitutionAvailable = false;
-        render();
-      }, { selected: replacement.substituteVariantId === product.id }))) : null,
+      replacement.searchResults?.length ? h("div", { class: "replacement-results" }, [
+        h("p", { class: "muted strong-help", text: "Select one replacement product:" }),
+        h("div", { class: "product-scroll" }, replacement.searchResults.map((product) => productRow(product, selectableProduct(product) ? () => {
+          replacement.substituteVariantId = product.id;
+          replacement.substituteTitle = product.title;
+          replacement.customSubstituteTitle = "";
+          replacement.noSubstitutionAvailable = false;
+          render();
+        } : null, { selected: replacement.substituteVariantId === product.id, selectable: selectableProduct(product) })))
+      ]) : null,
       h("div", { class: "grid two" }, [
-        field("Custom substitute name", input("text", replacement.customSubstituteTitle, (value) => {
-          replacement.customSubstituteTitle = value;
-          if (value.trim()) {
-            replacement.substituteVariantId = "";
-            replacement.substituteTitle = "";
-            replacement.noSubstitutionAvailable = false;
-          }
-        }, { placeholder: "Type approved substitute" })),
-        h("label", { class: "check-row field-check" }, [
+        h("div", { class: "field" }, [
+          h("label", { htmlFor: `custom_${cssId(replacement.lineItemId)}`, text: "Enter a replacement manually" }),
+          input("text", replacement.customSubstituteTitle, (value) => {
+            replacement.customSubstituteTitle = value;
+            if (value.trim()) {
+              replacement.substituteVariantId = "";
+              replacement.substituteTitle = "";
+              replacement.noSubstitutionAvailable = false;
+              replacement.includeProductLink = false;
+              replacement.productUrl = "";
+            }
+          }, { id: `custom_${cssId(replacement.lineItemId)}`, placeholder: "Example: 500 g Mild Cheddar", "aria-describedby": `customHelp_${cssId(replacement.lineItemId)}` }),
+          h("p", { id: `customHelp_${cssId(replacement.lineItemId)}`, class: "field-help", text: "Use this when the replacement is not listed in Shopify. Type the exact product name staff have approved." })
+        ]),
+        h("label", { class: `check-row field-check ${replacement.noSubstitutionAvailable ? "selected" : ""}` }, [
           input("checkbox", "", (_, event) => {
             replacement.noSubstitutionAvailable = event.target.checked;
             if (event.target.checked) {
               replacement.substituteVariantId = "";
               replacement.substituteTitle = "";
               replacement.customSubstituteTitle = "";
+              replacement.includeProductLink = false;
+              replacement.productUrl = "";
             }
             render();
           }, { checked: replacement.noSubstitutionAvailable }),
-          h("span", { text: "No substitution available" })
+          h("span", { text: "No replacement is available" }),
+          h("small", { text: "Choose this when there is nothing suitable to offer. The customer will be asked about a refund instead." })
         ])
       ]),
-      h("label", { class: "check-row" }, [
+      replacement.customSubstituteTitle?.trim() ? h("div", { class: "alert success compact", text: "Manual replacement selected." }) : null,
+      replacement.noSubstitutionAvailable ? h("div", { class: "alert subtle compact", text: "No replacement available. The customer will be asked about a refund instead." }) : null,
+      h("label", { class: `check-row ${replacement.includeProductLink ? "selected" : ""}` }, [
         input("checkbox", "", (_, event) => {
           if (event.target.checked && !replacement.substituteVariantId) {
-            toast("error", "Select a Shopify substitution product before adding a product link.");
+            replacement.searchError = "Select a Shopify product before adding a product link.";
             event.target.checked = false;
+            render();
             return;
           }
           replacement.includeProductLink = event.target.checked;
           replacement.productUrl = event.target.checked ? publicProductUrl(replacement.substituteVariantId) : "";
           render();
-        }, { checked: replacement.includeProductLink }),
-        h("span", { text: "Add product link to message" })
-      ])
+        }, { checked: replacement.includeProductLink, disabled: !replacement.substituteVariantId }),
+        h("span", { text: "Include a link to the replacement product" }),
+        h("small", { text: "The customer will receive a clickable link in the SMS so they can view the selected replacement online." })
+      ]),
+      h("div", { class: replacement.includeProductLink ? "alert success compact" : "alert subtle compact", text: linkHelp }),
+      replacementProblem(replacement) ? h("p", { class: "field-error", text: replacementProblem(replacement) }) : null
     ]);
   }
 
@@ -1037,16 +1074,30 @@
   }
 
   function productRow(product, onClick, options = {}) {
-    const row = h(onClick ? "button" : "div", { type: onClick ? "button" : undefined, class: `product-row ${options.selected ? "selected" : ""}`, onClick }, [
+    const selectable = options.selectable !== false && Boolean(onClick);
+    const row = h(selectable ? "button" : "div", {
+      type: selectable ? "button" : undefined,
+      class: `product-row ${options.selected ? "selected" : ""} ${selectable ? "" : "not-selectable"}`,
+      onClick: selectable ? onClick : undefined,
+      "aria-pressed": selectable ? (options.selected ? "true" : "false") : undefined
+    }, [
       product.imageUrl ? h("img", { class: "thumb", src: product.imageUrl, alt: "" }) : h("div", { class: "thumb placeholder", text: "WE" }),
       h("div", {}, [
         h("strong", { text: product.title || product.productTitle || "Product" }),
-        h("span", { text: [product.variantTitle, `Qty: ${product.quantity ?? product.inventoryQuantity ?? "-"}`, product.sku ? `SKU: ${product.sku}` : "", product.barcode ? `Barcode: ${product.barcode}` : ""].filter(Boolean).join(" - ") })
+        h("span", { text: [product.variantTitle || "Default variant", options.plain && product.quantity ? `Qty: ${product.quantity}` : "", product.sku ? `SKU: ${product.sku}` : "", product.barcode ? `Barcode: ${product.barcode}` : ""].filter(Boolean).join(" - ") }),
+        options.selected ? h("em", { class: "selected-replacement-label", text: "Selected replacement" }) : null
       ]),
       h("span", { class: badgeClass(product), text: stockText(product) })
     ]);
-    if (!onClick) row.classList.add("plain");
+    if (!selectable) row.classList.add("plain");
     return row;
+  }
+
+  function selectableProduct(product) {
+    if (product.availableForSale === false) return false;
+    if (product.productStatus === "ARCHIVED") return false;
+    if (Number.isFinite(product.inventoryQuantity) && product.inventoryQuantity <= 0) return false;
+    return true;
   }
 
   function badgeClass(product) {
@@ -1056,16 +1107,44 @@
   }
 
   function stockText(product) {
-    if (product.availableForSale === false) return "Unavailable";
-    if (Number.isFinite(product.inventoryQuantity)) return product.inventoryQuantity <= 0 ? "Out of stock" : `${product.inventoryQuantity} available`;
-    return product.price || "Available";
+    if (product.availableForSale === false || product.productStatus === "ARCHIVED") return "Out of stock";
+    if (Number.isFinite(product.inventoryQuantity)) return product.inventoryQuantity <= 0 ? "Out of stock" : `${product.inventoryQuantity} in stock`;
+    return "Availability unknown";
   }
 
-  function replacementProblem() {
+  function cssId(value) {
+    return String(value || "").replace(/[^A-Za-z0-9_-]/g, "_");
+  }
+
+  function replacementComplete(replacement) {
+    return Boolean(replacement.noSubstitutionAvailable || replacement.substituteVariantId || replacement.customSubstituteTitle?.trim());
+  }
+
+  function replacementStatus(replacement) {
+    if (replacement.noSubstitutionAvailable) return { text: "No replacement available", className: "neutral" };
+    if (replacement.substituteVariantId) return { text: "Shopify replacement selected", className: "success" };
+    if (replacement.customSubstituteTitle?.trim()) return { text: "Manual replacement selected", className: "success" };
+    return { text: "Replacement still needed", className: "warn" };
+  }
+
+  function productLinkHelp(replacement) {
+    if (replacement.includeProductLink) return "A product link will be added to the SMS.";
+    if (replacement.substituteVariantId) return "This option is available because a Shopify replacement is selected.";
+    if (replacement.customSubstituteTitle?.trim()) return "Product links cannot be used for manually entered replacements.";
+    if (replacement.noSubstitutionAvailable) return "Product links cannot be used when no replacement is available.";
+    return "Select a Shopify replacement above to include a product link.";
+  }
+
+  function replacementProblem(replacement = null) {
+    if (replacement) {
+      if (!replacementComplete(replacement)) return "Choose a Shopify replacement, enter a manual replacement, or select 'No replacement is available'.";
+      if (replacement.includeProductLink && !replacement.substituteVariantId) return "Select a Shopify product before adding a product link.";
+      return "";
+    }
     const replacements = state.substitution.replacements;
-    if (!replacements.length) return "Select at least one item that needs a substitution.";
-    const missing = replacements.find((replacement) => !replacement.noSubstitutionAvailable && !replacement.substituteVariantId && !replacement.customSubstituteTitle?.trim());
-    if (missing) return "Choose a substitution or select No substitution available for every unavailable item.";
+    if (!replacements.length) return "Select at least one unavailable item.";
+    const missing = replacements.find((item) => !replacementComplete(item));
+    if (missing) return "Complete the replacement choice for every unavailable item before continuing.";
     return "";
   }
 
