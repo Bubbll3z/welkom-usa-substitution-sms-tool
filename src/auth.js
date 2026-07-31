@@ -470,8 +470,55 @@ async function tryBootstrapAdminLogin({ username, password, event, env = process
   if (!enabled || !bootstrapUsername || !bootstrapPassword) return null;
   if (username !== bootstrapUsername || !timingSafeEqualText(password, bootstrapPassword)) return null;
 
-  const existing = await getUserByUsername(bootstrapUsername, env);
-  if (existing) return null;
+const existing = await getUserByUsername(bootstrapUsername, env);
+
+if (existing) {
+  const verified = await verifyPassword(password, existing);
+
+  if (!verified) {
+    return null;
+  }
+
+  const repaired = await saveUser(
+    {
+      ...existing,
+      displayName:
+        env.ADMIN_BOOTSTRAP_DISPLAY_NAME ||
+        existing.displayName ||
+        bootstrapUsername,
+      role: "admin",
+      isActive: true,
+      failedLoginCount: 0,
+      lockedUntil: null,
+      lastLoginAt: nowIso(now)
+    },
+    env
+  );
+
+  const session = await createSession({
+    user: repaired,
+    event,
+    env,
+    now,
+    rememberMe
+  });
+
+  await recordSecurityEvent(
+    "bootstrap_admin_repaired",
+    {
+      userId: repaired.id,
+      username: repaired.username
+    },
+    env
+  );
+
+  return {
+    ok: true,
+    user: sanitizeUser(repaired),
+    session: session.session,
+    cookie: session.cookie
+  };
+}
 
   const created = await createUser({
     username: bootstrapUsername,
