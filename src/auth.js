@@ -426,22 +426,53 @@ async function delayForFailures(count) {
 async function authenticateUser({ username, password, event, env = process.env, now = Date.now(), rememberMe = false }) {
   const generic = { ok: false, status: 401, code: "AUTH_REQUIRED", error: "Invalid username or password." };
   const normalized = normalizeUsername(username);
+
   const user = await getUserByUsername(normalized, env);
-  if (!user) {
-    const bootstrap = await tryBootstrapAdminLogin({ username: normalized, password, event, env, now, rememberMe });
-    if (bootstrap) return bootstrap;
-    await delayForFailures(2);
-    await recordSecurityEvent("login_failed", { username: normalized || "[missing]", reason: "generic" }, env);
-    return generic;
+
+if (!user || !user.isActive) {
+  const bootstrap = await tryBootstrapAdminLogin({
+    username: normalized,
+    password,
+    event,
+    env,
+    now,
+    rememberMe
+  });
+
+  if (bootstrap) {
+    return bootstrap;
   }
-  if (!user.isActive) {
-    await recordSecurityEvent("login_failed", { userId: user.id, username: user.username, reason: "disabled" }, env);
-    return generic;
-  }
-  if (user.lockedUntil && new Date(user.lockedUntil).getTime() > now) {
-    await recordSecurityEvent("login_failed", { userId: user.id, username: user.username, reason: "locked" }, env);
-    return generic;
-  }
+}
+
+if (!user) {
+  await delayForFailures(2);
+
+  await recordSecurityEvent(
+    "login_failed",
+    {
+      username: normalized || "[missing]",
+      reason: "generic"
+    },
+    env
+  );
+
+  return generic;
+}
+
+if (!user.isActive) {
+  await recordSecurityEvent(
+    "login_failed",
+    {
+      userId: user.id,
+      username: user.username,
+      reason: "disabled"
+    },
+    env
+  );
+
+  return generic;
+}
+  
   await delayForFailures(user.failedLoginCount || 0);
   const verified = await verifyPassword(password, user);
   if (!verified) {
