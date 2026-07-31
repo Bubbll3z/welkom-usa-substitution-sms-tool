@@ -377,6 +377,16 @@ fetch("/.netlify/functions/setup-admin", {
 
 HTTP `201` means the permanent active admin was created in `welkom-sms-users`. HTTP `409` means that username already exists. The setup function is temporary: after the account exists, delete `netlify/functions/setup-admin.js`, remove `ADMIN_SETUP_SECRET`, `PERMANENT_ADMIN_USERNAME`, `PERMANENT_ADMIN_DISPLAY_NAME` and `PERMANENT_ADMIN_PASSWORD` from Netlify, then redeploy. Do not leave this setup function or setup variables enabled permanently.
 
+### Temporary testing login bypass
+
+For urgent app testing only, set this Netlify environment variable and redeploy:
+
+```text
+TEMP_AUTH_BYPASS=true
+```
+
+When enabled, protected staff and admin routes act as if a temporary admin user named `test-admin` is logged in. Remove `TEMP_AUTH_BYPASS` or set it to `false` before any staff or customer-facing production use.
+
 Login behavior:
 
 - 30-minute idle timeout

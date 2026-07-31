@@ -239,6 +239,7 @@ test.beforeEach(async () => {
   delete process.env.PERMANENT_ADMIN_USERNAME;
   delete process.env.PERMANENT_ADMIN_DISPLAY_NAME;
   delete process.env.PERMANENT_ADMIN_PASSWORD;
+  delete process.env.TEMP_AUTH_BYPASS;
   ["ENABLED", "USERNAME", "DISPLAY_NAME", "PASSWORD"].forEach((suffix) => {
     delete process.env[`ADMIN_${"BOOTSTRAP"}_${suffix}`];
   });
@@ -315,6 +316,26 @@ test("temporary no-login mode no longer bypasses server authentication", async (
 
   const dashboard = await handler(event("/api/dashboard", undefined, {}, "GET"));
   assert.equal(dashboard.statusCode, 401);
+});
+
+test("temporary auth bypass opens staff and admin routes for testing only", async () => {
+  clearAuthMemory();
+  process.env.TEMP_AUTH_BYPASS = "true";
+
+  const me = await authMeHandler(event("/.netlify/functions/auth-me", undefined, {}, "GET"));
+  assert.equal(me.statusCode, 200);
+  const meBody = JSON.parse(me.body);
+  assert.equal(meBody.user.username, "test-admin");
+  assert.equal(meBody.user.role, "admin");
+  assert.equal(meBody.authRequired, false);
+  assert.equal(meBody.bypass, true);
+
+  const login = await authLoginHandler(event("/.netlify/functions/auth-login", { username: "anything", password: "anything" }, {}, "POST"));
+  assert.equal(login.statusCode, 200);
+  assert.equal(JSON.parse(login.body).bypass, true);
+
+  const users = await adminListUsersHandler(event("/.netlify/functions/admin-list-users", undefined, {}, "GET"));
+  assert.equal(users.statusCode, 200);
 });
 
 test("setup-admin creates a permanent admin and legacy env login no longer creates users", async () => {

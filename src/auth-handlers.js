@@ -1,5 +1,7 @@
 const {
   authenticateUser,
+  authBypassEnabled,
+  bypassAuthResult,
   changePassword,
   clearSessionCookie,
   createUser,
@@ -87,6 +89,21 @@ function safeClientConfig(env = process.env) {
 async function handleAuthLogin(event) {
   const wrongMethod = method(event, "POST");
   if (wrongMethod) return wrongMethod;
+  if (authBypassEnabled()) {
+    const result = bypassAuthResult();
+    return json(200, {
+      success: true,
+      user: result.user,
+      staffName: result.user.displayName,
+      role: result.user.role,
+      expiresAt: result.session.expiresAt,
+      absoluteExpiresAt: result.session.absoluteExpiresAt,
+      csrfToken: csrfTokenForSession(result.session),
+      authRequired: false,
+      bypass: true,
+      config: safeClientConfig()
+    });
+  }
   if (bodyTooLarge(event)) return error(413, "INVALID_REQUEST", "Request body is too large.");
   if (!requireJson(event)) return error(415, "INVALID_REQUEST", "Content-Type must be application/json.");
   const body = parseBody(event);
@@ -131,6 +148,7 @@ async function handleAuthLogin(event) {
 async function handleAuthLogout(event) {
   const wrongMethod = method(event, "POST");
   if (wrongMethod) return wrongMethod;
+  if (authBypassEnabled()) return json(200, { success: true, bypass: true }, { "Set-Cookie": clearSessionCookie() });
   const auth = await requireAuth(event);
   if (!auth.ok) return badAuth(auth);
   const csrf = validateCsrf({ event, auth });
@@ -152,7 +170,8 @@ async function handleAuthMe(event) {
     expiresAt: auth.session.expiresAt,
     absoluteExpiresAt: auth.session.absoluteExpiresAt,
     csrfToken: csrfTokenForSession(auth.session),
-    authRequired: true,
+    authRequired: !auth.bypass,
+    bypass: Boolean(auth.bypass),
     config: safeClientConfig()
   });
 }
