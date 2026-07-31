@@ -34,6 +34,14 @@ if (!indexHtml.includes('<script src="/app.js" defer></script>')) {
   fail("index.html must load /app.js as an external same-origin deferred script.");
 }
 
+if (!/publish\s*=\s*"public"/.test(netlifyToml)) {
+  fail("netlify.toml must publish the current public/ frontend.");
+}
+
+if (!/from\s*=\s*"\/\*"\s*\n\s*to\s*=\s*"\/index\.html"\s*\n\s*status\s*=\s*200/.test(netlifyToml)) {
+  fail("netlify.toml must rewrite SPA routes to /index.html.");
+}
+
 if (/<style[\s>]/i.test(indexHtml) || /<script(?!\s+src=)[^>]*>/i.test(indexHtml) || /\sstyle\s*=/i.test(indexHtml)) {
   fail("index.html must not contain inline styles, inline scripts, or style attributes.");
 }

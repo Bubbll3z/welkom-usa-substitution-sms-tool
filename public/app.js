@@ -461,6 +461,19 @@
     }
   }
 
+  function clearObsoleteFrontendCaches() {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.getRegistrations()
+        .then((registrations) => registrations.forEach((registration) => registration.unregister()))
+        .catch(() => {});
+    }
+    if ("caches" in window) {
+      window.caches.keys()
+        .then((keys) => keys.forEach((key) => window.caches.delete(key)))
+        .catch(() => {});
+    }
+  }
+
   function renderLogin() {
     let username = "";
     let password = "";
@@ -1969,5 +1982,6 @@
     navigateTo(routeLink.getAttribute("data-route"), event);
   }, true);
 
+  clearObsoleteFrontendCaches();
   checkSession();
 })();

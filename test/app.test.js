@@ -1227,6 +1227,22 @@ test("frontend build does not expose Shopify Admin secrets or direct Admin API c
   assert.doesNotMatch(`${html}\n${app}\n${css}`, /shpat_|SHOPIFY_ADMIN_ACCESS_TOKEN|SHOPIFY_CLIENT_SECRET|X-Shopify-Access-Token|\/admin\/api\/|graphql\.json|VITE_.*SHOPIFY/i);
 });
 
+test("Netlify deploys only the current SPA shell with safe rewrites and cache headers", () => {
+  const config = fs.readFileSync(path.join(__dirname, "../netlify.toml"), "utf8");
+  const app = fs.readFileSync(path.join(__dirname, "../public/app.js"), "utf8");
+  assert.match(config, /publish\s*=\s*"public"/);
+  assert.match(config, /command\s*=\s*"npm run build"/);
+  assert.ok(config.includes('from = "/.netlify/functions/*"'));
+  assert.match(config, /from\s*=\s*"\/api\/\*"/);
+  assert.match(config, /from\s*=\s*"\/\*"\s*\n\s*to\s*=\s*"\/index\.html"\s*\n\s*status\s*=\s*200/);
+  assert.match(config, /for\s*=\s*"\/index\.html"[\s\S]*Cache-Control\s*=\s*"no-cache, no-store, must-revalidate"/);
+  assert.match(config, /for\s*=\s*"\/app\.js"[\s\S]*Cache-Control\s*=\s*"no-cache, no-store, must-revalidate"/);
+  assert.match(config, /for\s*=\s*"\/assets\/\*"[\s\S]*Cache-Control\s*=\s*"public, max-age=31536000, immutable"/);
+  assert.match(app, /clearObsoleteFrontendCaches/);
+  assert.match(app, /getRegistrations\(\)/);
+  assert.doesNotMatch(app, /serviceWorker\.register/);
+});
+
 test("config diagnostics reports safe check names without secret values", async () => {
   const blocked = await handler(event("/api/config-diagnostics", undefined, {}, "GET"));
   assert.equal(blocked.statusCode, 401);
