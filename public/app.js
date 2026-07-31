@@ -321,8 +321,14 @@
   }
 
   function shouldReturnToLogin(error, path) {
-    if (path === "/.netlify/functions/auth-me" || path === "/.netlify/functions/auth-login") return false;
-    return error.status === 401 || error.code === "AUTH_REQUIRED";
+  if (
+    path === "/.netlify/functions/auth-me" ||
+    path === "/.netlify/functions/auth-login"
+  ) {
+    return false;
+  }
+
+  return error.code === "AUTH_REQUIRED";
   }
 
   function handleExpiredSession() {
