@@ -202,6 +202,15 @@
       check: [
         ["path", { d: "m20 6-11 11-5-5" }]
       ],
+      clock: [
+        ["circle", { cx: "12", cy: "12", r: "10" }],
+        ["path", { d: "M12 6v6l4 2" }]
+      ],
+      xCircle: [
+        ["circle", { cx: "12", cy: "12", r: "10" }],
+        ["path", { d: "m15 9-6 6" }],
+        ["path", { d: "m9 9 6 6" }]
+      ],
       send: [
         ["path", { d: "m22 2-7 20-4-9-9-4z" }],
         ["path", { d: "M22 2 11 13" }]
@@ -1206,49 +1215,127 @@
   function renderReplies() {
     let search = "";
     let status = "";
-    const list = h("div", { class: "stack" });
+    const counts = { needsAction: 0, approved: 0, declined: 0, expired: 0, total: 0 };
+    const panel = h("div", { class: "replies-panel" });
+    const filters = [
+      ["", "All"],
+      ["unread", "Needs Action"],
+      ["reviewed", "Approved"],
+      ["unmatched", "Unmatched"]
+    ];
+    const drawLoading = () => {
+      clear(panel);
+      panel.append(h("div", { class: "reply-skeletons", "aria-label": "Loading replies" }, [
+        h("div", { class: "reply-skeleton" }),
+        h("div", { class: "reply-skeleton" }),
+        h("div", { class: "reply-skeleton" })
+      ]));
+    };
+    const updateCounts = (replies) => {
+      counts.total = replies.length;
+      counts.needsAction = replies.filter((reply) => !reply.reviewed).length;
+      counts.approved = replies.filter((reply) => reply.reviewed).length;
+      counts.declined = replies.filter((reply) => reply.classification === "stop").length;
+      counts.expired = 0;
+    };
+    const drawStats = (replies) => {
+      updateCounts(replies);
+      return h("div", { class: "reply-stats" }, [
+        replyStat("Needs Action", counts.needsAction, "amber", "clock"),
+        replyStat("Approved", counts.approved, "emerald", "check"),
+        replyStat("Declined", counts.declined, "red", "xCircle")
+      ]);
+    };
+    const drawFilters = () => h("div", { class: "reply-filter-scroll" }, filters.map(([value, label]) => button(label, `reply-filter-pill ${status === value ? "active" : ""}`, () => {
+      status = value;
+      load();
+    }, { "aria-pressed": status === value ? "true" : "false" })));
+    const drawResults = (replies, warning = "") => {
+      clear(panel);
+      panel.append(drawStats(replies));
+      panel.append(h("div", { class: "reply-controls" }, [
+        h("label", { class: "reply-search" }, [
+          icon("search", { class: "reply-search-icon" }),
+          input("search", search, (value) => {
+            search = value;
+            window.clearTimeout(state.replyTimer);
+            state.replyTimer = window.setTimeout(load, 250);
+          }, { placeholder: "Search order, phone, or reply text", "aria-label": "Search replies" })
+        ]),
+        drawFilters(),
+        button("Refresh", "secondary reply-refresh", load)
+      ]));
+      if (warning) panel.append(h("div", { class: "alert warn", text: warning }));
+      if (!replies.length) {
+        panel.append(replyEmptyState(search));
+        return;
+      }
+      panel.append(h("div", { class: "reply-card-list" }, replies.map((reply) => replyCard(reply))));
+    };
     const load = async () => {
-      clear(list);
-      list.append(h("div", { class: "empty", text: "Loading replies..." }));
+      drawLoading();
       try {
         const params = new URLSearchParams();
         if (search) params.set("search", search);
         if (status) params.set("status", status);
         const result = await api(`/api/replies?${params.toString()}`);
-        clear(list);
         const replies = result.replies || [];
-        if (result.warning) list.append(h("div", { class: "alert warn", text: result.warning }));
-        if (!replies.length) list.append(h("div", { class: "empty", text: search ? "No replies match your search." : "No customer replies have been received yet." }));
-        replies.forEach((reply) => list.append(replyCard(reply)));
+        drawResults(replies, result.warning || "");
       } catch (error) {
-        clear(list);
-        list.append(h("div", { class: "alert error", text: "Replies could not be refreshed. Check the connection and try again." }));
+        clear(panel);
+        panel.append(h("div", { class: "alert error", text: "Replies could not be refreshed. Check the connection and try again." }));
       }
     };
     setTimeout(load, 0);
     return page("View Replies", "Review customer SMS replies that need attention.", [
-      card("Replies", [
-        h("div", { class: "toolbar" }, [
-          field("Search", input("search", search, (value) => { search = value; window.clearTimeout(state.replyTimer); state.replyTimer = window.setTimeout(load, 250); }, { placeholder: "Order, number or reply text" })),
-          field("Filter", select(status, [["", "All"], ["unread", "Unread"], ["reviewed", "Reviewed"], ["unmatched", "Unmatched"]], (value) => { status = value; load(); })),
-          h("div", { class: "field button-field" }, [button("Refresh", "secondary", load)])
-        ]),
-        list
+      card("Customer Replies", panel)
+    ]);
+  }
+
+  function replyStat(label, value, tone, iconName) {
+    return h("div", { class: `reply-stat ${tone}` }, [
+      h("span", { class: "reply-stat-icon" }, [icon(iconName)]),
+      h("span", { class: "reply-stat-label", text: label }),
+      h("strong", { text: String(value) })
+    ]);
+  }
+
+  function replyStatus(reply) {
+    if (reply.expired) return ["Expired", "expired"];
+    if (reply.classification === "stop") return ["Declined", "declined"];
+    if (reply.reviewed) return ["Approved", "approved"];
+    return ["Needs Action", "needs-action"];
+  }
+
+  function replyEmptyState(search) {
+    return h("div", { class: "reply-empty" }, [
+      icon("inbox", { class: "reply-empty-icon" }),
+      h("h3", { text: search ? "No matching replies" : "No replies yet" }),
+      h("p", { text: search ? "Try a different order number, phone number, or reply word." : "Customer responses will appear here once they reply to a substitution SMS." }),
+      h("p", { class: "reply-empty-hint" }, [
+        h("span", { text: "Send your first substitution SMS to get started. " }),
+        h("a", { href: "/substitution/order", text: "Go to Send page", onClick: (event) => { event.preventDefault(); go("/substitution/order"); } })
       ])
     ]);
   }
 
   function replyCard(reply) {
-    return h("article", { class: `message-row ${reply.read ? "" : "unread"}` }, [
-      h("div", {}, [
-        h("strong", { text: reply.matchedOrderName || "Unmatched reply" }),
-        h("p", { text: `${reply.fromRedacted} - ${formatDateTime(reply.receivedAt)} - ${reply.preview}` }),
-        reply.classification !== "ordinary" ? h("span", { class: reply.classification === "stop" ? "badge error" : "badge warn", text: reply.classification.toUpperCase() }) : null
+    const [statusText, statusClass] = replyStatus(reply);
+    const reviewed = statusClass === "approved";
+    return h("article", { class: `reply-card-modern ${statusClass}` }, [
+      h("div", { class: "reply-card-head" }, [
+        h("div", {}, [
+          h("strong", { text: reply.matchedOrderName || "Unmatched reply" }),
+          h("p", { text: `${reply.fromRedacted || "Unknown number"} - ${formatDateTime(reply.receivedAt)}` })
+        ]),
+        h("span", { class: `reply-status ${statusClass}`, text: statusText })
       ]),
-      h("div", { class: "row-actions" }, [
+      h("p", { class: "reply-preview", text: reply.preview || "No preview available." }),
+      reply.classification && reply.classification !== "ordinary" ? h("span", { class: reply.classification === "stop" ? "badge error" : "badge warn", text: reply.classification.toUpperCase() }) : null,
+      h("div", { class: "reply-card-actions" }, [
         button("Open Reply", "secondary", () => openReply(reply.replyId)),
-        button("Mark Reviewed", "primary", () => markReply(reply.replyId))
-      ])
+        button(reviewed ? "Reviewed" : "Mark Reviewed", "primary", () => markReply(reply.replyId), reviewed ? { disabled: true } : {})
+      ]),
     ]);
   }
 
