@@ -1,4 +1,5 @@
 const { redactPhone } = require("./sms");
+const { buildStorefrontProductUrl, parseNumericShopifyId } = require("./storefront");
 
 const SHOP_DOMAIN = "welkom-usa.myshopify.com";
 const DEFAULT_API_VERSION = "2025-10";
@@ -128,7 +129,10 @@ function simplifyVariant(variant) {
   const product = variant.product || {};
   return {
     id: variant.id,
+    variantId: parseNumericShopifyId(variant.id),
     productId: product.id || "",
+    productHandle: product.handle || "",
+    productUrl: buildStorefrontProductUrl({ productHandle: product.handle || "", variantId: variant.id }),
     title: product.title || variant.displayName || variant.title || "",
     variantTitle: variant.title && variant.title !== "Default Title" ? variant.title : "",
     sku: variant.sku || "",
@@ -278,6 +282,7 @@ const ORDER_FIELDS = `
         image { url }
         product {
           id
+          handle
           title
           status
           featuredImage { url }
@@ -495,6 +500,7 @@ async function getVariantById(variantId, { env = process.env, fetchImpl = fetch 
         image { url }
         product {
           id
+          handle
           title
           status
           featuredImage { url }

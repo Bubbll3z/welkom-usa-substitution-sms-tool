@@ -3,7 +3,6 @@ const ACCESS_TYPES = {
   customerToken: "customer-token",
   staff: "staff",
   admin: "admin",
-  setupSecret: "setup-secret",
   twilioWebhook: "twilio-webhook",
   shopifyWebhook: "shopify-webhook"
 };
@@ -58,7 +57,6 @@ const API_ENDPOINTS = [
 
 const FUNCTION_ENDPOINTS = [
   { functionName: "auth-login", methods: ["POST"], access: ACCESS_TYPES.public },
-  { functionName: "setup-admin", methods: ["POST"], access: ACCESS_TYPES.setupSecret },
   { functionName: "auth-logout", methods: ["POST"], access: ACCESS_TYPES.staff },
   { functionName: "auth-me", methods: ["GET"], access: ACCESS_TYPES.staff },
   { functionName: "auth-change-password", methods: ["POST"], access: ACCESS_TYPES.staff },

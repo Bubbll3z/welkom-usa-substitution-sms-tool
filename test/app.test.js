@@ -17,7 +17,7 @@ const { handler: authMeHandler } = require("../netlify/functions/auth-me");
 const { handler: adminCreateUserHandler } = require("../netlify/functions/admin-create-user");
 const { handler: adminListUsersHandler } = require("../netlify/functions/admin-list-users");
 const { handler: adminDisableUserHandler } = require("../netlify/functions/admin-disable-user");
-const { handler: setupAdminHandler } = require("../netlify/functions/setup-admin");
+const { FUNCTION_ENDPOINTS } = require("../src/endpoint-registry");
 const {
   clearAuthMemory,
   createSession,
@@ -170,7 +170,7 @@ function orderNode(overrides = {}) {
 
 function variantNode(overrides = {}) {
   return {
-    id: "gid://shopify/ProductVariant/new",
+    id: "gid://shopify/ProductVariant/987654321",
     title: "Default Title",
     displayName: "Cadbury Flake Chocolate Bar 32g",
     sku: "FLAKE32",
@@ -180,7 +180,8 @@ function variantNode(overrides = {}) {
     inventoryQuantity: 12,
     image: { url: "https://example.com/flake.jpg" },
     product: {
-      id: "gid://shopify/Product/new",
+      id: "gid://shopify/Product/123456789",
+      handle: "cadbury-flake-chocolate-bar-32g",
       title: "Cadbury Flake Chocolate Bar 32g",
       status: "ACTIVE",
       featuredImage: { url: "https://example.com/flake.jpg" }
@@ -235,10 +236,6 @@ test.beforeEach(async () => {
   delete process.env.SHOPIFY_CLIENT_SECRET;
   delete process.env.BLOB_INIT_ENABLED;
   delete process.env.REQUIRE_LOGIN;
-  delete process.env.ADMIN_SETUP_SECRET;
-  delete process.env.PERMANENT_ADMIN_USERNAME;
-  delete process.env.PERMANENT_ADMIN_DISPLAY_NAME;
-  delete process.env.PERMANENT_ADMIN_PASSWORD;
   delete process.env.TEMP_AUTH_BYPASS;
   ["ENABLED", "USERNAME", "DISPLAY_NAME", "PASSWORD"].forEach((suffix) => {
     delete process.env[`ADMIN_${"BOOTSTRAP"}_${suffix}`];
@@ -338,61 +335,43 @@ test("temporary auth bypass opens staff and admin routes for testing only", asyn
   assert.equal(users.statusCode, 200);
 });
 
-test("setup-admin creates a permanent admin and legacy env login no longer creates users", async () => {
+test("removed setup endpoint stays absent; permanent admins and admin-created staff authenticate normally", async () => {
   clearAuthMemory();
-  process.env[`ADMIN_${"BOOTSTRAP"}_ENABLED`] = "true";
-  process.env[`ADMIN_${"BOOTSTRAP"}_USERNAME`] = "legacy-manager";
-  process.env[`ADMIN_${"BOOTSTRAP"}_DISPLAY_NAME`] = "Legacy Manager";
-  process.env[`ADMIN_${"BOOTSTRAP"}_PASSWORD`] = "legacy-setup-pass-123";
 
-  const legacyLogin = await authLoginHandler(event("/.netlify/functions/auth-login", { username: "legacy-manager", password: "legacy-setup-pass-123" }, { "x-forwarded-proto": "https" }));
-  assert.equal(legacyLogin.statusCode, 401);
-  assert.equal(await getUserByUsername("legacy-manager"), null);
-  assert.doesNotMatch(legacyLogin.body, /legacy-setup-pass-123|passwordHash|passwordSalt/);
+  const unknownLogin = await authLoginHandler(event("/.netlify/functions/auth-login", { username: "unrecognized-user", password: "unknown-user-pass-123" }, { "x-forwarded-proto": "https" }));
+  assert.equal(unknownLogin.statusCode, 401);
+  assert.equal(await getUserByUsername("unrecognized-user"), null);
+  assert.doesNotMatch(unknownLogin.body, /unknown-user-pass-123|passwordHash|passwordSalt/);
 
-  const getSetup = await setupAdminHandler(event("/.netlify/functions/setup-admin", undefined, {}, "GET"));
-  assert.equal(getSetup.statusCode, 405);
-  assert.equal(getSetup.headers["Cache-Control"], "no-store");
+  const setupFunctionPath = path.join(__dirname, "..", "netlify", "functions", "setup-admin.js");
+  assert.equal(fs.existsSync(setupFunctionPath), false);
+  assert.equal(FUNCTION_ENDPOINTS.some((entry) => entry.functionName === "setup-admin"), false);
 
-  const noSecret = await setupAdminHandler(event("/.netlify/functions/setup-admin", undefined, {}, "POST"));
-  assert.equal(noSecret.statusCode, 401);
-
-  process.env.ADMIN_SETUP_SECRET = "setup-secret-123";
-  const badSecret = await setupAdminHandler(event("/.netlify/functions/setup-admin", undefined, { "x-admin-setup-secret": "wrong-secret" }, "POST"));
-  assert.equal(badSecret.statusCode, 401);
-
-  const missingConfig = await setupAdminHandler(event("/.netlify/functions/setup-admin", undefined, { "x-admin-setup-secret": "setup-secret-123" }, "POST"));
-  assert.equal(missingConfig.statusCode, 500);
-  assert.doesNotMatch(missingConfig.body, /setup-secret-123|passwordHash|passwordSalt/);
-
-  process.env.PERMANENT_ADMIN_USERNAME = "manager";
-  process.env.PERMANENT_ADMIN_DISPLAY_NAME = "Manager";
-  process.env.PERMANENT_ADMIN_PASSWORD = "permanent-pass-123";
-
-  const created = await setupAdminHandler(event("/.netlify/functions/setup-admin", undefined, { "x-admin-setup-secret": "setup-secret-123" }, "POST"));
-  assert.equal(created.statusCode, 201);
-  assert.equal(created.headers["Cache-Control"], "no-store");
-  assert.doesNotMatch(created.body, /permanent-pass-123|setup-secret-123|passwordHash|passwordSalt/);
-  const createdBody = JSON.parse(created.body);
-  assert.equal(createdBody.user.username, "manager");
-  assert.equal(createdBody.user.displayName, "Manager");
-  assert.equal(createdBody.user.role, "admin");
-  assert.equal(createdBody.user.isActive, true);
-
-  const saved = await getUserByUsername("manager");
-  assert.equal(saved.role, "admin");
-  assert.equal(saved.isActive, true);
-  assert.ok(saved.passwordHash);
-  assert.notEqual(saved.passwordHash, "permanent-pass-123");
-
-  const duplicate = await setupAdminHandler(event("/.netlify/functions/setup-admin", undefined, { "x-admin-setup-secret": "setup-secret-123" }, "POST"));
-  assert.equal(duplicate.statusCode, 409);
-  assert.doesNotMatch(duplicate.body, /permanent-pass-123|setup-secret-123|passwordHash|passwordSalt/);
+  const created = await createUser({ username: "manager", displayName: "Manager", password: "permanent-pass-123", role: "admin" });
+  assert.equal(created.ok, true);
 
   const login = await authLoginHandler(event("/.netlify/functions/auth-login", { username: "manager", password: "permanent-pass-123" }, { "x-forwarded-proto": "https" }));
   assert.equal(login.statusCode, 200);
   assert.equal(JSON.parse(login.body).user.role, "admin");
   assert.doesNotMatch(login.body, /permanent-pass-123|passwordHash|passwordSalt/);
+
+  const cookie = login.headers["Set-Cookie"].split(";")[0];
+  csrfByCookie.set(cookie, JSON.parse(login.body).csrfToken);
+  const createStaff = await adminCreateUserHandler(event("/.netlify/functions/admin-create-user", {
+    username: "warehouse-staff",
+    displayName: "Warehouse Staff",
+    password: "staff-created-pass-123",
+    role: "staff"
+  }, { cookie }));
+  assert.equal(createStaff.statusCode, 200);
+
+  const staffLogin = await authLoginHandler(event("/.netlify/functions/auth-login", {
+    username: "warehouse-staff",
+    password: "staff-created-pass-123"
+  }, { "x-forwarded-proto": "https" }));
+  assert.equal(staffLogin.statusCode, 200);
+  assert.equal(JSON.parse(staffLogin.body).user.role, "staff");
+  assert.doesNotMatch(staffLogin.body, /staff-created-pass-123|passwordHash|passwordSalt/);
 });
 
 test("auth functions protect passwords, disabled users, lockout, roles and cookie flags", async () => {
@@ -726,6 +705,26 @@ test("product search filters inactive and unavailable variants", async () => {
   assert.equal(products.length, 1);
   assert.equal(products[0].sku, "FLAKE32");
   assert.equal(products[0].inventoryQuantity, 12);
+});
+
+test("product search returns a public storefront handle, numeric variant id and product URL", async () => {
+  const products = await searchProductsForSubstitutions("FLAKE32", {
+    env: shopifyEnv(),
+    fetchImpl: mockFetch({
+      variant: variantNode({
+        id: "gid://shopify/ProductVariant/987654321",
+        product: {
+          ...variantNode().product,
+          handle: "cadbury-flake-chocolate-bar-32g"
+        }
+      })
+    }),
+    excludeVariantId: "gid://shopify/ProductVariant/old"
+  });
+  assert.equal(products.length, 1);
+  assert.equal(products[0].productHandle, "cadbury-flake-chocolate-bar-32g");
+  assert.equal(products[0].variantId, "987654321");
+  assert.equal(products[0].productUrl, "https://www.welkomusa.com/products/cadbury-flake-chocolate-bar-32g?variant=987654321");
 });
 
 test("API order search and selected-line-item substitutions require session", async () => {
@@ -1211,7 +1210,8 @@ test("step 2 substitution wizard keeps replacement safeguards visible in fronten
   const app = fs.readFileSync(path.join(__dirname, "../public/app.js"), "utf8");
   assert.match(app, /function selectableProduct\(product\)/);
   assert.match(app, /product\.productStatus === "ARCHIVED"/);
-  assert.match(app, /disabled: !replacement\.substituteVariantId/);
+  assert.match(app, /disabled: !getProductLinkState\(replacement\)\.enabled/);
+  assert.match(app, /replacement\.productHandle = product\.productHandle \|\| ""/);
   assert.match(app, /replacement\.includeProductLink = false/);
   assert.match(app, /replacementStatus\(replacement\)/);
   assert.match(app, /aria-pressed/);

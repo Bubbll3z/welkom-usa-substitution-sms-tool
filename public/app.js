@@ -1,6 +1,8 @@
 (() => {
   "use strict";
 
+  const storefrontHelpers = globalThis.WelkomStorefront || {};
+
   const TEMPLATE = "Welkom USA: Hi [FIRST NAME], [UNAVAILABLE ITEM] in order #[ORDER NUMBER] is unavailable. We can substitute it with [SUBSTITUTE ITEM]. Reply SUBSTITUTE to approve or REFUND for a refund. Reply STOP to opt out.";
   const MULTI_TEMPLATE = "Welkom USA: Hi [FIRST NAME], the following item(s) in order #[ORDER NUMBER] are unavailable:\n\n[REPLACEMENTS]\n\nReply with your choice or contact Welkom USA for assistance. Reply STOP to opt out.";
   const GSM_7_BASIC = "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ\u001bÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
@@ -84,7 +86,13 @@
         consentConfirmed: false,
         error: "",
         unavailableItem: "",
-        substituteItem: ""
+        substituteItem: "",
+        unavailableResults: [],
+        substituteResults: [],
+        unavailableSearchError: "",
+        substituteSearchError: "",
+        unavailableSearching: false,
+        substituteSearching: false
       },
       replacements: [],
       message: "",
@@ -801,9 +809,9 @@
     return h("div", { class: "stack" }, [
       h("p", { class: "muted", text: "For in-store or non-Shopify customers. Staff must confirm the customer gave permission to receive this SMS." }),
       h("div", { class: "grid two" }, [
-      field("Customer phone number", input("tel", m.phone, (value) => { m.phone = value; }, { placeholder: "+12125551234" })),
-      field("First name optional", input("text", m.firstName, (value) => { m.firstName = value; }, { placeholder: "Customer" })),
-      field("Reference or note", input("text", m.reference, (value) => { m.reference = value; }, { placeholder: "Till slip, receipt or staff note" })),
+      field("Customer phone number", input("tel", m.phone, (value) => { m.phone = value; render(); }, { placeholder: "+12125551234" })),
+      field("First name optional", input("text", m.firstName, (value) => { m.firstName = value; render(); }, { placeholder: "Customer" })),
+      field("Reference or note", input("text", m.reference, (value) => { m.reference = value; render(); }, { placeholder: "Till slip, receipt or staff note" })),
       h("label", { class: "check-row wide" }, [
         input("checkbox", "", (_, event) => { m.consentConfirmed = event.target.checked; render(); }, { checked: m.consentConfirmed }),
         h("span", { text: "I confirm that this customer gave permission to receive this SMS." })
@@ -917,10 +925,68 @@
 
   function renderManualReplacementBuilder() {
     const manual = state.substitution.manual;
+    const searchManualProducts = async (fieldKey) => {
+      const query = String(manual[fieldKey] || "").trim();
+      const resultsKey = fieldKey === "unavailableItem" ? "unavailableResults" : "substituteResults";
+      const errorKey = fieldKey === "unavailableItem" ? "unavailableSearchError" : "substituteSearchError";
+      const searchingKey = fieldKey === "unavailableItem" ? "unavailableSearching" : "substituteSearching";
+      manual[errorKey] = "";
+      if (query.length < 2) {
+        manual[resultsKey] = [];
+        render();
+        return;
+      }
+      manual[searchingKey] = true;
+      render();
+      try {
+        const result = await api("/api/product-search", {
+          method: "POST",
+          body: JSON.stringify({ query })
+        });
+        manual[resultsKey] = result.products || [];
+        if (!manual[resultsKey].length) {
+          manual[errorKey] = "No matching Shopify products were found. You can still type a custom item name.";
+        }
+      } catch (error) {
+        manual[resultsKey] = [];
+        manual[errorKey] = messageFor(error);
+      } finally {
+        manual[searchingKey] = false;
+        render();
+      }
+    };
+
+    const suggestionField = (label, fieldKey, placeholder) => {
+      const resultsKey = fieldKey === "unavailableItem" ? "unavailableResults" : "substituteResults";
+      const errorKey = fieldKey === "unavailableItem" ? "unavailableSearchError" : "substituteSearchError";
+      const searchingKey = fieldKey === "unavailableItem" ? "unavailableSearching" : "substituteSearching";
+      const suggestions = manual[resultsKey] || [];
+      return h("div", { class: "field" }, [
+        h("label", { text: label }),
+        input("text", manual[fieldKey], (value) => {
+          manual[fieldKey] = value;
+          manual[errorKey] = "";
+          searchManualProducts(fieldKey);
+        }, { placeholder }),
+        h("p", { class: "field-help", text: "Start typing to search Shopify products, or leave your own wording if this is a custom item." }),
+        manual[searchingKey] ? h("p", { class: "muted", text: "Searching products..." }) : null,
+        manual[errorKey] ? h("p", { class: "field-error", text: manual[errorKey] }) : null,
+        suggestions.length ? h("div", { class: "replacement-results compact" }, [
+          h("p", { class: "muted strong-help", text: "Tap a product to use its name:" }),
+          h("div", { class: "product-scroll" }, suggestions.map((product) => productRow(product, () => {
+            manual[fieldKey] = product.title;
+            manual[resultsKey] = [];
+            manual[errorKey] = "";
+            render();
+          }, { selectable: true })))
+        ]) : null
+      ]);
+    };
+
     return h("div", { class: "stack" }, [
       h("div", { class: "grid two" }, [
-        field("Unavailable item", input("text", manual.unavailableItem, (value) => { manual.unavailableItem = value; }, { placeholder: "Requested item" })),
-        field("Substitute item", input("text", manual.substituteItem, (value) => { manual.substituteItem = value; }, { placeholder: "Replacement item or no substitute" }))
+        suggestionField("Unavailable item", "unavailableItem", "Requested item"),
+        suggestionField("Substitute item", "substituteItem", "Replacement item or no substitute")
       ]),
       actionButton("Add Custom Option", "secondary big", () => {
         if (!manual.unavailableItem.trim()) return toast("error", "Select at least one item that needs a substitution.");
@@ -929,10 +995,17 @@
           unavailableTitle: manual.unavailableItem.trim(),
           customSubstituteTitle: manual.substituteItem.trim(),
           noSubstitutionAvailable: !manual.substituteItem.trim(),
-          includeProductLink: false
+          includeProductLink: false,
+          productHandle: "",
+          variantId: "",
+          productUrl: ""
         });
         manual.unavailableItem = "";
         manual.substituteItem = "";
+        manual.unavailableResults = [];
+        manual.substituteResults = [];
+        manual.unavailableSearchError = "";
+        manual.substituteSearchError = "";
         render();
       })
     ]);
@@ -947,6 +1020,8 @@
       originalVariantId: item.variantId,
       originalImageUrl: item.imageUrl,
       substituteVariantId: "",
+      variantId: "",
+      productHandle: "",
       substituteTitle: "",
       customSubstituteTitle: "",
       noSubstitutionAvailable: false,
@@ -1017,9 +1092,13 @@
         h("p", { class: "muted strong-help", text: "Select one replacement product:" }),
         h("div", { class: "product-scroll" }, replacement.searchResults.map((product) => productRow(product, selectableProduct(product) ? () => {
           replacement.substituteVariantId = product.id;
+          replacement.variantId = product.variantId || "";
+          replacement.productHandle = product.productHandle || "";
           replacement.substituteTitle = product.title;
+          replacement.productUrl = product.productUrl || "";
           replacement.customSubstituteTitle = "";
           replacement.noSubstitutionAvailable = false;
+          if (!replacement.productUrl) replacement.includeProductLink = false;
           render();
         } : null, { selected: replacement.substituteVariantId === product.id, selectable: selectableProduct(product) })))
       ]) : null,
@@ -1030,6 +1109,8 @@
             replacement.customSubstituteTitle = value;
             if (value.trim()) {
               replacement.substituteVariantId = "";
+              replacement.variantId = "";
+              replacement.productHandle = "";
               replacement.substituteTitle = "";
               replacement.noSubstitutionAvailable = false;
               replacement.includeProductLink = false;
@@ -1043,6 +1124,8 @@
             replacement.noSubstitutionAvailable = event.target.checked;
             if (event.target.checked) {
               replacement.substituteVariantId = "";
+              replacement.variantId = "";
+              replacement.productHandle = "";
               replacement.substituteTitle = "";
               replacement.customSubstituteTitle = "";
               replacement.includeProductLink = false;
@@ -1058,16 +1141,16 @@
       replacement.noSubstitutionAvailable ? h("div", { class: "alert subtle compact", text: "No replacement available. The customer will be asked about a refund instead." }) : null,
       h("label", { class: `check-row ${replacement.includeProductLink ? "selected" : ""}` }, [
         input("checkbox", "", (_, event) => {
-          if (event.target.checked && !replacement.substituteVariantId) {
-            replacement.searchError = "Select a Shopify product before adding a product link.";
+          const linkState = getProductLinkState(replacement);
+          if (event.target.checked && !linkState.enabled) {
+            replacement.searchError = linkState.reason;
             event.target.checked = false;
             render();
             return;
           }
           replacement.includeProductLink = event.target.checked;
-          replacement.productUrl = event.target.checked ? publicProductUrl(replacement.substituteVariantId) : "";
           render();
-        }, { checked: replacement.includeProductLink, disabled: !replacement.substituteVariantId }),
+        }, { checked: replacement.includeProductLink, disabled: !getProductLinkState(replacement).enabled }),
         h("span", { text: "Include a link to the replacement product" }),
         h("small", { text: "The customer will receive a clickable link in the SMS so they can view the selected replacement online." })
       ]),
@@ -1141,17 +1224,15 @@
   }
 
   function productLinkHelp(replacement) {
-    if (replacement.includeProductLink) return "A product link will be added to the SMS.";
-    if (replacement.substituteVariantId) return "This option is available because a Shopify replacement is selected.";
-    if (replacement.customSubstituteTitle?.trim()) return "Product links cannot be used for manually entered replacements.";
-    if (replacement.noSubstitutionAvailable) return "Product links cannot be used when no replacement is available.";
-    return "Select a Shopify replacement above to include a product link.";
+    const linkState = getProductLinkState(replacement);
+    if (replacement.includeProductLink && replacement.productUrl) return `A product link will be added to the SMS: ${replacement.productUrl}`;
+    return linkState.reason;
   }
 
   function replacementProblem(replacement = null) {
     if (replacement) {
       if (!replacementComplete(replacement)) return "Choose a Shopify replacement, enter a manual replacement, or select 'No replacement is available'.";
-      if (replacement.includeProductLink && !replacement.substituteVariantId) return "Select a Shopify product before adding a product link.";
+      if (replacement.includeProductLink && !getProductLinkState(replacement).enabled) return getProductLinkState(replacement).reason;
       return "";
     }
     const replacements = state.substitution.replacements;
@@ -1942,9 +2023,16 @@
     return { encoding: "GSM-7", length, segments: length ? (length <= 160 ? 1 : Math.ceil(length / 153)) : 0 };
   }
 
-  function publicProductUrl(variantId) {
-    const id = String(variantId || "").split("/").pop();
-    return id ? `https://www.welkomusa.com/products/${encodeURIComponent(id)}` : "";
+  function getProductLinkState(replacement) {
+    if (storefrontHelpers.getReplacementProductLinkState) {
+      return storefrontHelpers.getReplacementProductLinkState(replacement);
+    }
+    if (replacement.noSubstitutionAvailable) return { enabled: false, reason: "Product links cannot be used when no replacement is available." };
+    if (replacement.customSubstituteTitle?.trim()) return { enabled: false, reason: "Product links cannot be used for manually entered replacements." };
+    if (!replacement.substituteVariantId) return { enabled: false, reason: "Select a Shopify replacement above to include a product link." };
+    if (!replacement.productHandle) return { enabled: false, reason: "This Shopify replacement does not have a public storefront handle, so a product link cannot be added." };
+    if (!replacement.productUrl) return { enabled: false, reason: "This Shopify replacement is not available on the public Welkom USA website, so a product link cannot be added." };
+    return { enabled: true, reason: "This product is available on the Welkom USA website, so a customer link can be included." };
   }
 
   function staffCopyConfigured() {
