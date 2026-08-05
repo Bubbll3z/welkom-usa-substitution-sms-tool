@@ -1217,6 +1217,16 @@ test("step 2 substitution wizard keeps replacement safeguards visible in fronten
   assert.match(app, /aria-pressed/);
 });
 
+test("manual step 2 preserves a selected Shopify substitute when adding a custom option", () => {
+  const app = fs.readFileSync(path.join(__dirname, "../public/app.js"), "utf8");
+  assert.match(app, /const selectionKey = fieldKey === "unavailableItem" \? "unavailableSelection" : "substituteSelection"/);
+  assert.match(app, /manual\[selectionKey\] = product/);
+  assert.match(app, /const chosenSubstitute = manual\.substituteSelection/);
+  assert.match(app, /substituteVariantId: chosenSubstitute\?\.id \|\| ""/);
+  assert.match(app, /substituteTitle: chosenSubstitute\?\.title \|\| ""/);
+  assert.match(app, /customSubstituteTitle: chosenSubstitute \? "" : manual\.substituteItem\.trim\(\)/);
+});
+
 test("frontend build does not expose Shopify Admin secrets or direct Admin API calls", () => {
   const html = fs.readFileSync(path.join(__dirname, "../public/index.html"), "utf8");
   const app = fs.readFileSync(path.join(__dirname, "../public/app.js"), "utf8");

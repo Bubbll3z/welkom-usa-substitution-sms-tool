@@ -87,6 +87,8 @@
         error: "",
         unavailableItem: "",
         substituteItem: "",
+        unavailableSelection: null,
+        substituteSelection: null,
         unavailableResults: [],
         substituteResults: [],
         unavailableSearchError: "",
@@ -750,13 +752,13 @@
           : null,
         s.mode === "order" ? renderOrderSearch() : renderManualRecipient(),
         s.order ? renderOrderSummary(s.order) : null,
-        helper ? h("div", { class: "alert subtle", text: helper }) : null
+        h("div", { id: "customerStepHelper", class: helper ? "alert subtle" : "alert subtle hidden", text: helper || "" })
       ]),
       h("div", { class: "wizard-actions" }, [
         button("Back to Menu", "ghost", () => confirmDiscard("/menu")),
         h("span"),
         button("Start Over", "secondary", () => confirmStartOver()),
-        actionButton("Continue to Items", "primary big", () => continueFromCustomer(), { disabled: !customerStepValid() }, "chevronRight")
+        actionButton("Continue to Items", "primary big", () => continueFromCustomer(), { disabled: !customerStepValid(), "data-customer-continue": "true" }, "chevronRight")
       ])
     ]);
   }
@@ -806,19 +808,27 @@
 
   function renderManualRecipient() {
     const m = state.substitution.manual;
+    const updateManualField = (key, value) => {
+      m[key] = value;
+      m.error = "";
+      updateCustomerStepControls();
+    };
     return h("div", { class: "stack" }, [
       h("p", { class: "muted", text: "For in-store or non-Shopify customers. Staff must confirm the customer gave permission to receive this SMS." }),
       h("div", { class: "grid two" }, [
-      field("Customer phone number", input("tel", m.phone, (value) => { m.phone = value; render(); }, { placeholder: "+12125551234" })),
-      field("First name optional", input("text", m.firstName, (value) => { m.firstName = value; render(); }, { placeholder: "Customer" })),
-      field("Reference or note", input("text", m.reference, (value) => { m.reference = value; render(); }, { placeholder: "Till slip, receipt or staff note" })),
+      field("Customer phone number", input("tel", m.phone, (value) => { updateManualField("phone", value); }, { placeholder: "+12125551234" })),
+      field("First name optional", input("text", m.firstName, (value) => { updateManualField("firstName", value); }, { placeholder: "Customer" })),
+      field("Reference or note", input("text", m.reference, (value) => { updateManualField("reference", value); }, { placeholder: "Till slip, receipt or staff note" })),
       h("label", { class: "check-row wide" }, [
-        input("checkbox", "", (_, event) => { m.consentConfirmed = event.target.checked; render(); }, { checked: m.consentConfirmed }),
+        input("checkbox", "", (_, event) => {
+          m.consentConfirmed = event.target.checked;
+          m.error = "";
+          updateCustomerStepControls();
+        }, { checked: m.consentConfirmed }),
         h("span", { text: "I confirm that this customer gave permission to receive this SMS." })
       ]),
       !m.phone || isE164(m.phone) ? null : h("p", { class: "field-error wide", text: "Enter a valid customer phone number, including the country code." })
-      ]),
-      actionButton("Continue with This Number", "secondary big full", () => continueFromCustomer(), { disabled: !customerStepValid() }, "smartphone")
+      ])
     ]);
   }
 
@@ -843,6 +853,12 @@
 
   function continueFromCustomer() {
     const s = state.substitution;
+    if (!customerStepValid()) {
+      const helper = customerStepHelper();
+      if (helper) toast("error", helper);
+      updateCustomerStepControls();
+      return;
+    }
     if (s.mode === "order" && s.order && !s.order.smsConsent?.granted) return toast("error", "SMS consent is not recorded for this order. A message cannot be sent from the order workflow.");
     go("/substitution/items");
   }
@@ -864,6 +880,19 @@
     if (!s.order) return "Search for a Shopify order, then choose Use This Order.";
     if (!s.order.smsConsent?.granted) return "This order does not show SMS consent. Use manual mode only if the customer gave permission another way.";
     return "";
+  }
+
+  function updateCustomerStepControls() {
+    const continueButton = document.querySelector("[data-customer-continue='true']");
+    if (continueButton) {
+      continueButton.disabled = !customerStepValid();
+    }
+    const helperNode = document.getElementById("customerStepHelper");
+    if (helperNode) {
+      const helper = customerStepHelper();
+      helperNode.textContent = helper || "";
+      helperNode.className = helper ? "alert subtle" : "alert subtle hidden";
+    }
   }
 
   function renderChooseItems() {
@@ -960,21 +989,27 @@
       const resultsKey = fieldKey === "unavailableItem" ? "unavailableResults" : "substituteResults";
       const errorKey = fieldKey === "unavailableItem" ? "unavailableSearchError" : "substituteSearchError";
       const searchingKey = fieldKey === "unavailableItem" ? "unavailableSearching" : "substituteSearching";
+      const selectionKey = fieldKey === "unavailableItem" ? "unavailableSelection" : "substituteSelection";
       const suggestions = manual[resultsKey] || [];
       return h("div", { class: "field" }, [
         h("label", { text: label }),
         input("text", manual[fieldKey], (value) => {
           manual[fieldKey] = value;
+          if (!manual[selectionKey] || manual[selectionKey].title !== value.trim()) {
+            manual[selectionKey] = null;
+          }
           manual[errorKey] = "";
           searchManualProducts(fieldKey);
         }, { placeholder }),
         h("p", { class: "field-help", text: "Start typing to search Shopify products, or leave your own wording if this is a custom item." }),
+        manual[selectionKey] ? h("div", { class: "alert success compact", text: "Shopify product selected." }) : null,
         manual[searchingKey] ? h("p", { class: "muted", text: "Searching products..." }) : null,
         manual[errorKey] ? h("p", { class: "field-error", text: manual[errorKey] }) : null,
         suggestions.length ? h("div", { class: "replacement-results compact" }, [
           h("p", { class: "muted strong-help", text: "Tap a product to use its name:" }),
           h("div", { class: "product-scroll" }, suggestions.map((product) => productRow(product, () => {
             manual[fieldKey] = product.title;
+            manual[selectionKey] = product;
             manual[resultsKey] = [];
             manual[errorKey] = "";
             render();
@@ -990,18 +1025,25 @@
       ]),
       actionButton("Add Custom Option", "secondary big", () => {
         if (!manual.unavailableItem.trim()) return toast("error", "Select at least one item that needs a substitution.");
+        const chosenSubstitute = manual.substituteSelection && manual.substituteSelection.title === manual.substituteItem.trim()
+          ? manual.substituteSelection
+          : null;
         state.substitution.replacements.push({
           lineItemId: `manual_${Date.now()}`,
           unavailableTitle: manual.unavailableItem.trim(),
-          customSubstituteTitle: manual.substituteItem.trim(),
+          substituteVariantId: chosenSubstitute?.id || "",
+          variantId: chosenSubstitute?.variantId || "",
+          productHandle: chosenSubstitute?.productHandle || "",
+          substituteTitle: chosenSubstitute?.title || "",
+          customSubstituteTitle: chosenSubstitute ? "" : manual.substituteItem.trim(),
           noSubstitutionAvailable: !manual.substituteItem.trim(),
           includeProductLink: false,
-          productHandle: "",
-          variantId: "",
-          productUrl: ""
+          productUrl: chosenSubstitute?.productUrl || ""
         });
         manual.unavailableItem = "";
         manual.substituteItem = "";
+        manual.unavailableSelection = null;
+        manual.substituteSelection = null;
         manual.unavailableResults = [];
         manual.substituteResults = [];
         manual.unavailableSearchError = "";
