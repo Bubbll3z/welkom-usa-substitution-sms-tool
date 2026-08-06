@@ -895,6 +895,29 @@
     }
   }
 
+  function captureFocusState(inputId, event = null) {
+    const target = event?.target;
+    if (!target || target.id !== inputId) return null;
+    return {
+      id: inputId,
+      start: target.selectionStart,
+      end: target.selectionEnd
+    };
+  }
+
+  function renderAndRestoreFocus(focusState) {
+    render();
+    if (!focusState?.id) return;
+    requestAnimationFrame(() => {
+      const node = document.getElementById(focusState.id);
+      if (!node) return;
+      node.focus();
+      if (typeof focusState.start === "number" && typeof focusState.end === "number" && typeof node.setSelectionRange === "function") {
+        node.setSelectionRange(focusState.start, focusState.end);
+      }
+    });
+  }
+
   function renderChooseItems() {
     const s = state.substitution;
     const orderMode = s.mode === "order";
@@ -954,7 +977,7 @@
 
   function renderManualReplacementBuilder() {
     const manual = state.substitution.manual;
-    const searchManualProducts = async (fieldKey) => {
+    const searchManualProducts = async (fieldKey, focusState = null) => {
       const query = String(manual[fieldKey] || "").trim();
       const resultsKey = fieldKey === "unavailableItem" ? "unavailableResults" : "substituteResults";
       const errorKey = fieldKey === "unavailableItem" ? "unavailableSearchError" : "substituteSearchError";
@@ -962,11 +985,11 @@
       manual[errorKey] = "";
       if (query.length < 2) {
         manual[resultsKey] = [];
-        render();
+        manual[searchingKey] = false;
+        renderAndRestoreFocus(focusState);
         return;
       }
       manual[searchingKey] = true;
-      render();
       try {
         const result = await api("/api/product-search", {
           method: "POST",
@@ -981,7 +1004,7 @@
         manual[errorKey] = messageFor(error);
       } finally {
         manual[searchingKey] = false;
-        render();
+        renderAndRestoreFocus(focusState);
       }
     };
 
@@ -990,17 +1013,18 @@
       const errorKey = fieldKey === "unavailableItem" ? "unavailableSearchError" : "substituteSearchError";
       const searchingKey = fieldKey === "unavailableItem" ? "unavailableSearching" : "substituteSearching";
       const selectionKey = fieldKey === "unavailableItem" ? "unavailableSelection" : "substituteSelection";
+      const inputId = fieldKey === "unavailableItem" ? "manualUnavailableItemInput" : "manualSubstituteItemInput";
       const suggestions = manual[resultsKey] || [];
       return h("div", { class: "field" }, [
         h("label", { text: label }),
-        input("text", manual[fieldKey], (value) => {
+        input("text", manual[fieldKey], (value, event) => {
           manual[fieldKey] = value;
           if (!manual[selectionKey] || manual[selectionKey].title !== value.trim()) {
             manual[selectionKey] = null;
           }
           manual[errorKey] = "";
-          searchManualProducts(fieldKey);
-        }, { placeholder }),
+          searchManualProducts(fieldKey, captureFocusState(inputId, event));
+        }, { id: inputId, placeholder }),
         h("p", { class: "field-help", text: "Start typing to search Shopify products, or leave your own wording if this is a custom item." }),
         manual[selectionKey] ? h("div", { class: "alert success compact", text: "Shopify product selected." }) : null,
         manual[searchingKey] ? h("p", { class: "muted", text: "Searching products..." }) : null,
