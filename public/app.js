@@ -117,6 +117,7 @@
       reference: "",
       consentConfirmed: false,
       message: "",
+      template: "",
       includeStaffCopy: false,
       authorizedResend: false
     };
@@ -444,7 +445,10 @@
     renderQuickNav();
     clear(els.main);
     els.main.append(config.render());
-    els.main.focus({ preventScroll: true });
+    if (state.lastRoute !== state.route) {
+      els.main.focus({ preventScroll: true });
+      state.lastRoute = state.route;
+    }
   }
 
   function renderQuickNav() {
@@ -1348,11 +1352,11 @@
         h("span", { text: `${estimate.length} / 320 - ${estimate.segments} segment${estimate.segments === 1 ? "" : "s"}` })
       ]),
       h("div", { class: "grid two" }, [
-        field("Quick note optional", input("text", s.quickNote, (value) => { s.quickNote = value; }, { placeholder: "Add a quick note for staff records" })),
+        field("Quick note optional", input("text", s.quickNote, (value) => { s.quickNote = value; render(); }, { placeholder: "Add a quick note for staff records" })),
         field("Link expiry", select(s.linkExpiryHours, [["24", "24 hours"], ["48", "48 hours"], ["72", "72 hours"]], (value) => { s.linkExpiryHours = value; }))
       ]),
       h("div", { class: "stack" }, [
-        field("Editable SMS message", textarea(s.message, (value) => { s.message = value; render(); }, { maxlength: "320", rows: "8" })),
+        field("Editable SMS message", textarea(s.message, (value, event) => { s.message = value; renderAndRestoreFocus(captureFocusState("reviewMessageTextarea", event)); }, { id: "reviewMessageTextarea", maxlength: "320", rows: "8" })),
         h("div", { class: estimate.length > 260 ? "alert warn" : "alert subtle", text: `${estimate.length} / 320 characters - ${estimate.encoding}` }),
         h("label", { class: "check-row" }, [
           input("checkbox", "", (_, event) => { s.includeStaffCopy = event.target.checked; render(); }, { checked: s.includeStaffCopy, disabled: !staffCopyConfigured() }),
@@ -1452,8 +1456,8 @@
   }
 
   function renderReplies() {
-    let search = "";
-    let status = "";
+    if (!state.replySearch) state.replySearch = { search: "", status: "" };
+    const rs = state.replySearch;
     const counts = { needsAction: 0, approved: 0, declined: 0, expired: 0, total: 0 };
     const panel = h("div", { class: "replies-panel" });
     const filters = [
@@ -1485,18 +1489,18 @@
         replyStat("Declined", counts.declined, "red", "xCircle")
       ]);
     };
-    const drawFilters = () => h("div", { class: "reply-filter-scroll" }, filters.map(([value, label]) => button(label, `reply-filter-pill ${status === value ? "active" : ""}`, () => {
-      status = value;
+    const drawFilters = () => h("div", { class: "reply-filter-scroll" }, filters.map(([value, label]) => button(label, `reply-filter-pill ${rs.status === value ? "active" : ""}`, () => {
+      rs.status = value;
       load();
-    }, { "aria-pressed": status === value ? "true" : "false" })));
+    }, { "aria-pressed": rs.status === value ? "true" : "false" })));
     const drawResults = (replies, warning = "") => {
       clear(panel);
       panel.append(drawStats(replies));
       panel.append(h("div", { class: "reply-controls" }, [
         h("label", { class: "reply-search" }, [
           icon("search", { class: "reply-search-icon" }),
-          input("search", search, (value) => {
-            search = value;
+          input("search", rs.search, (value) => {
+            rs.search = value;
             window.clearTimeout(state.replyTimer);
             state.replyTimer = window.setTimeout(load, 250);
           }, { placeholder: "Search order, phone, or reply text", "aria-label": "Search replies" })
@@ -1506,7 +1510,7 @@
       ]));
       if (warning) panel.append(h("div", { class: "alert warn", text: warning }));
       if (!replies.length) {
-        panel.append(replyEmptyState(search));
+        panel.append(replyEmptyState(rs.search));
         return;
       }
       panel.append(h("div", { class: "reply-card-list" }, replies.map((reply) => replyCard(reply))));
@@ -1515,8 +1519,8 @@
       drawLoading();
       try {
         const params = new URLSearchParams();
-        if (search) params.set("search", search);
-        if (status) params.set("status", status);
+        if (rs.search) params.set("search", rs.search);
+        if (rs.status) params.set("status", rs.status);
         const result = await api(`/api/replies?${params.toString()}`);
         const replies = result.replies || [];
         drawResults(replies, result.warning || "");
@@ -1601,13 +1605,13 @@
 
   function renderHistory() {
     const list = h("div", { class: "stack" }, [h("div", { class: "empty", text: "Loading message history..." })]);
-    let search = "";
-    let status = "";
+    if (!state.historySearch) state.historySearch = { search: "", status: "" };
+    const hs = state.historySearch;
     const load = async () => {
       try {
         const params = new URLSearchParams({ limit: "50" });
-        if (search) params.set("search", search);
-        if (status) params.set("status", status);
+        if (hs.search) params.set("search", hs.search);
+        if (hs.status) params.set("status", hs.status);
         const result = await api(`/api/message-history?${params.toString()}`);
         clear(list);
         const records = result.records || [];
@@ -1622,8 +1626,8 @@
     return page("Message History", "View sent messages and copy approved wording.", [
       card("Sent messages", [
         h("div", { class: "toolbar" }, [
-          field("Search", input("search", search, (value) => { search = value; window.clearTimeout(state.historyTimer); state.historyTimer = window.setTimeout(load, 250); })),
-          field("Status", select(status, [["", "All"], ["sent", "Sent"], ["delivered", "Delivered"], ["failed", "Failed"], ["not-sent", "Dry run"]], (value) => { status = value; load(); })),
+          field("Search", input("search", hs.search, (value) => { hs.search = value; window.clearTimeout(state.historyTimer); state.historyTimer = window.setTimeout(load, 250); })),
+          field("Status", select(hs.status, [["", "All"], ["sent", "Sent"], ["delivered", "Delivered"], ["failed", "Failed"], ["not-sent", "Dry run"]], (value) => { hs.status = value; load(); })),
           h("div", { class: "field button-field" }, [button("Refresh", "secondary", load)])
         ]),
         list
@@ -1667,7 +1671,8 @@
         c.mode === "order" ? renderCustomOrderSearch() : renderCustomManualFields()
       ]),
       card("Step 2: Write Message", [
-        field("Template", select("", [["", "Choose optional template"], ["substitution", "Substitution helper"], ["custom", "Blank custom message"]], (value) => {
+        field("Template", select(c.template, [["", "Choose optional template"], ["substitution", "Substitution helper"], ["custom", "Blank custom message"]], (value) => {
+          c.template = value;
           if (value === "substitution") c.message = "Welkom USA: Hi [FIRST NAME], we need help with your order #[ORDER NUMBER]. Please reply when you can. Reply STOP to opt out.";
           if (value === "custom") c.message = "Welkom USA: ";
           render();
@@ -1676,7 +1681,7 @@
           button("Insert first name", "ghost", () => { c.message += c.mode === "order" ? c.order?.customer?.firstName || "" : c.firstName || ""; render(); }),
           button("Insert order number", "ghost", () => { c.message += c.mode === "order" ? c.order?.name || "" : c.reference || ""; render(); })
         ]),
-        textarea(c.message, (value) => { c.message = value; render(); }, { rows: "7", maxlength: "640", placeholder: "Welkom USA: Write the approved customer message here. Reply STOP to opt out." }),
+        textarea(c.message, (value, event) => { c.message = value; renderAndRestoreFocus(captureFocusState("customMessageTextarea", event)); }, { id: "customMessageTextarea", rows: "7", maxlength: "640", placeholder: "Welkom USA: Write the approved customer message here. Reply STOP to opt out." }),
         h("div", { class: "alert subtle", text: `${estimate.length} / 320 characters - ${estimate.encoding} - ${estimate.segments} segment${estimate.segments === 1 ? "" : "s"}` }),
         h("div", { class: "actions" }, [
           button("Copy", "secondary", () => copyText(c.message)),
